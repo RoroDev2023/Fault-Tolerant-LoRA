@@ -1,0 +1,15 @@
+{
+  "run_id": "resnet18-cifar10-clustered-k16-seed42",
+  "num_clusters": 16,
+  "seed": 42,
+  "n_init": 3,
+  "max_iter": 100,
+  "tol": 0.0001,
+  "clustering_threads": 4,
+  "device": "mps",
+  "source_checkpoint": "checkpoints/resnet18-cifar10-clean-seed42/best.pt",
+  "source_results": "results/resnet18-cifar10-clean-seed42",
+  "data_root": "data",
+  "checkpoint_root": "checkpoints",
+  "results_root": "results"
+}

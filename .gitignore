@@ -1,0 +1,30 @@
+# Project-local Python environment
+/.venv/
+
+# Python bytecode, tool caches, and packaging output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+/build/
+/dist/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Operating-system metadata
+.DS_Store
+._*
+Thumbs.db
+
+# Downloaded datasets and generated outputs at the project root
+/data/
+/results/
+/checkpoints/

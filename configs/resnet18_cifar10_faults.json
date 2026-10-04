@@ -1,0 +1,11 @@
+{
+  "run_id": "resnet18-cifar10-faults-p001-seed42",
+  "fault_probability": 0.01,
+  "seed": 42,
+  "cpu_threads": 4,
+  "source_encoding": "checkpoints/resnet18-cifar10-clustered-k16-seed42/encoding.pt",
+  "source_clustered_dense": "checkpoints/resnet18-cifar10-clustered-k16-seed42/clustered_dense.pt",
+  "source_results": "results/resnet18-cifar10-clustered-k16-seed42",
+  "checkpoint_root": "checkpoints",
+  "results_root": "results"
+}

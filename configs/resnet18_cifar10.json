@@ -1,0 +1,18 @@
+{
+  "run_id": "resnet18-cifar10-clean-seed42",
+  "seed": 42,
+  "epochs": 5,
+  "image_size": 96,
+  "batch_size": 128,
+  "evaluation_batch_size": 256,
+  "validation_per_class": 500,
+  "num_workers": 2,
+  "backbone_learning_rate": 0.001,
+  "classifier_learning_rate": 0.01,
+  "momentum": 0.9,
+  "weight_decay": 0.0005,
+  "device": "mps",
+  "data_root": "data",
+  "checkpoint_root": "checkpoints",
+  "results_root": "results"
+}

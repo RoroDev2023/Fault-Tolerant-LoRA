@@ -1,0 +1,13 @@
+{
+  "run_id": "resnet18-cifar10-fault-sweep-seed42",
+  "probabilities": [0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1],
+  "patterns_per_rate": 5,
+  "seed": 42,
+  "device": "mps",
+  "cpu_threads": 4,
+  "num_workers": 2,
+  "source_audit_results": "results/resnet18-cifar10-fault-checks-seed42",
+  "data_root": "data",
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}

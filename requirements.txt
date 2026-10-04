@@ -1,0 +1,7 @@
+# Direct dependencies for the initial vision workflow.
+# Resolved and verified with Python 3.11 on macOS arm64.
+torch==2.14.1
+torchvision==0.29.1
+numpy==2.4.6
+scikit-learn==1.9.1
+matplotlib==3.11.2

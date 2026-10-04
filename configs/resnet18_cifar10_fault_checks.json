@@ -1,0 +1,6 @@
+{
+  "run_id": "resnet18-cifar10-fault-checks-seed42",
+  "source_fault_results": "results/resnet18-cifar10-faults-p001-seed42",
+  "results_root": "results",
+  "cpu_threads": 4
+}
