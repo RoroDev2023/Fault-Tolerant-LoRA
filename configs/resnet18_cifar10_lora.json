@@ -1,0 +1,22 @@
+{
+  "run_id": "resnet18-cifar10-lora-r4-p001-seed52-train42",
+  "source_sweep_results": "results/resnet18-cifar10-fault-sweep-seed42",
+  "source_audit_results": "results/resnet18-cifar10-fault-checks-seed42",
+  "pattern_id": "rate03-seed52",
+  "rank": 4,
+  "alpha": 4.0,
+  "target_names": null,
+  "seed": 42,
+  "epochs": 5,
+  "batch_size": 128,
+  "evaluation_batch_size": 256,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "max_grad_norm": 1.0,
+  "device": "mps",
+  "cpu_threads": 4,
+  "num_workers": 2,
+  "data_root": "data",
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}

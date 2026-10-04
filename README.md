@@ -9,15 +9,18 @@ model performance, and adapter overhead.
 
 ## Implementation status
 
-Steps 1–7 are complete. Clean and k=16 clustered ResNet-18 baselines have been
+Steps 1–8 are complete. Clean and k=16 clustered ResNet-18 baselines have been
 evaluated on CIFAR-10, and their configurations, splits, preprocessing,
 checkpoints/encodings, provenance, and measured results are saved locally. The
 original clean checkpoint is preserved. A simplified adjacent-level simulator
 has saved one static 1%-probability fault pattern and its reconstructed faulty
-checkpoint. All eight full-model Step 6 audit checks and 37 unit tests pass.
+checkpoint. All eight full-model Step 6 audit checks and 44 unit tests pass.
 Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
-LoRA recovery and the language-model extension have not been implemented.
+Step 8 trained rank-4 LoRA adapters for five epochs on one saved 1% pattern,
+with all base parameters and normalization buffers frozen. Its paired test
+accuracy changed from 79.91% to 91.76%.
+Controlled comparisons and the language-model extension remain future work.
 
 ## Completed workflow
 
@@ -28,6 +31,7 @@ LoRA recovery and the language-model extension have not been implemented.
 5. [Fault simulation](#step-5-fault-simulation)
 6. [Fault-injection correctness checks](#step-6-fault-injection-correctness-checks)
 7. [Fault-rate experiments](#step-7-fault-rate-experiments)
+8. [LoRA recovery](#step-8-lora-recovery)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -44,17 +48,17 @@ added only in the later steps documented below.
 | Path | Purpose |
 | --- | --- |
 | `src/fault_lora/` | Root Python package for the research workflow. |
-| `src/fault_lora/models/` | ResNet-18 loading and clean checkpoint restoration; future adapter integration. |
+| `src/fault_lora/models/` | ResNet-18 loading and checkpoint restoration; convolutional and linear LoRA adapters. |
 | `src/fault_lora/data/` | Dataset preparation, preprocessing, and split handling. |
 | `src/fault_lora/memory/` | Scalar clustering, codebooks, typed indices, reversible physical mappings, and static adjacent-level patterns; future shared component integration. |
 | `src/fault_lora/evaluation/` | Classification metrics, artifact audits, controlled comparisons, and fault-rate plots. |
-| `src/fault_lora/training/` | Clean CIFAR-10 fine-tuning; future adapter-training workflows. |
-| `configs/` | Baseline, fault-generation, audit, and sweep configurations. |
-| `scripts/` | Environment checks, baseline commands, static fault generation, audit, and fault-rate sweeps. |
+| `src/fault_lora/training/` | Clean CIFAR-10 fine-tuning and adapter-only recovery training. |
+| `configs/` | Baseline, fault-generation, audit, sweep, and LoRA recovery configurations. |
+| `scripts/` | Environment checks, baselines, fault generation/audits, sweeps, and LoRA recovery. |
 | `tests/` | Offline baseline, representation, and integrity checks. |
-| `docs/figures/` | Repository copies of the verified Step 7 PNG/PDF figures embedded in this README. |
+| `docs/figures/` | Repository copies of verified Step 7 and Step 8 PNG/PDF figures embedded in this README. |
 | `results/` | Generated measurements and plots; ignored by Git. |
-| `checkpoints/` | Pretrained weights, clean checkpoints, clustered encodings, and decoded checkpoints; ignored by Git. |
+| `checkpoints/` | Pretrained weights, clean/decoded checkpoints, clustered encodings, sparse patterns, and adapter-only checkpoints; ignored by Git. |
 | `data/` | Downloaded CIFAR-10 files; ignored by Git. |
 | `.venv/` | Local Python virtual environment; ignored by Git. |
 | `requirements.txt` | Exact versions of the five direct dependencies. |
@@ -679,12 +683,187 @@ pattern, and all previously audited artifacts are preserved. The experiment
 continues to use uniform adjacent-level probabilities and one cell per index;
 it is not a hardware-calibrated result.
 
-## Next steps: 8–10 (not implemented)
+## Step 8: LoRA recovery
 
-8. **LoRA recovery:** freeze base parameters and train suitable adapters on the
-   training split using saved patterns; evaluate transfer to unseen patterns separately.
+**Purpose:** test whether a small trainable adapter can improve predictions from
+one model affected by a saved, fixed fault pattern while preserving its base state.
+
+The first experiment used `rate03-seed52`, the first saved pattern at p=0.01 in
+Step 7's declared order. It was chosen by order, rather than by its accuracy.
+This pattern corrupts **111,322 of 11,172,032 eligible cells**
+(actual rate **0.996435%**). The same substitutions
+remain fixed during training, validation, and both sides of the test comparison.
+
+### Adapter architecture and training
+
+We added rank-4 adapters to **all 21 Conv2d/Linear layers**, including the stem,
+residual convolutions, projection shortcuts, and classifier. Scaling uses
+alpha=4, so alpha/r=1. Linear layers compute:
+
+```text
+h = W_faulty x + (alpha / r) B(Ax)
+```
+
+For convolutions, A maps input channels to four channels using the original
+kernel, stride, padding, and dilation; B is a bias-free 1×1 convolution mapping
+those four channels to the original output width. The effective kernel update,
+flattened as output channels by input patch entries, has rank at most four.
+The base and adapter outputs are added before the existing normalization and
+activation. Both adapter branches have no bias or dropout. A starts with Kaiming
+initialization and B starts at zero, making the initial adapter output zero.
+This full-model identity was checked with exact synthetic logits and the saved
+validation result before training.
+
+All original weights, biases, BatchNorm affine parameters, running means,
+running variances, and counters were frozen. The model stays in evaluation mode
+while gradients remain enabled for A and B. This prevents BatchNorm updates
+from contributing to recovery. Exact equality of **all 122 base state tensors**
+was checked after every epoch and after selected-checkpoint evaluation.
+
+Training reused the original **45,000 training / 5,000 validation / 10,000 test**
+partition and 96×96 preprocessing. Training retained random crops and flips;
+validation/test used deterministic preprocessing. The recipe was five epochs,
+batch size 128, AdamW learning rate 0.001, weight decay 0.0001, cosine scheduling,
+gradient-norm clipping at 1.0, and adapter/data seed 42 on Apple MPS.
+No additional packages, models, or datasets were downloaded.
+
+Checkpoint selection used highest validation accuracy, then lowest validation
+cross-entropy; exact ties retain the earlier epoch. The initial zero-output
+adapter (epoch 0) also competed. **Epoch 3 was selected.**
+The test comparison ran only after selection, once for the selected adapter and
+once for the same faulty base with the initial zero-output adapter restored.
+
+### Measured recovery
+
+| Split | Same faulty model before LoRA | After selected LoRA | Accuracy gain |
+| --- | --- | --- | --- |
+| Validation | 80.26% | 92.32% | +12.06 pp |
+| Test | 79.91% | 91.76% | +11.85 pp |
+
+Test cross-entropy changed from
+**0.602161 to 0.238646**.
+For context, the original clean test reference remains **92.28%** and the
+clustered zero-fault reference remains **83.29%**. The before-LoRA value is this
+individual pattern's paired baseline, rather than the average of Step 7's five
+1% patterns.
+
+![Step 8: validation training curve and paired test recovery](docs/figures/resnet18-cifar10-step8-lora-recovery.png)
+
+[Download the PDF figure](docs/figures/resnet18-cifar10-step8-lora-recovery.pdf)
+
+The left panel shows validation accuracy at epoch 0 and after each training
+epoch; the star marks the selected checkpoint. The right panel compares the
+same test pattern before and after LoRA. Horizontal lines show the previously
+measured clean and clustered references. This is **one fault pattern and one
+training seed**, so the plot has no uncertainty bars.
+
+The adapters contain **145,780 trainable parameters**, or
+**1.304%** of the 11,181,642 frozen base
+parameters. Their float32 tensors occupy **583,120 bytes**
+(569.45 KiB), while the selected serialized checkpoint occupies
+606,741 bytes including metadata and archive overhead. Training plus
+per-epoch validation took 243.8 seconds; the full run including
+paired evaluation, reload checks, and plot export took 282.9 seconds.
+These are software measurements on this machine. Adapters use reliable storage
+and remain separate residual branches; compressed-runtime inference, hardware
+storage area, and inference speed gains have not been measured.
+
+### Why might recovery be this effective?
+
+The result is plausible because the adapters started from a trained network
+that still classified most images correctly and learned against one fixed
+fault pattern. The following explanations are hypotheses supported by the
+experiment's setup; their individual contributions have not been measured:
+
+1. **Useful features may have survived.** The base had already been pretrained
+   on ImageNet and fine-tuned on CIFAR-10. Clustering approximated its weights,
+   and this pattern changed approximately 1% of the stored indices. Its 79.91%
+   starting test accuracy suggests substantial useful information remained.
+2. **Small updates act throughout the network.** Rank 4 was applied to all
+   21 convolutional and linear layers, providing 145,780 trainable parameters.
+   Corrections at multiple layers can jointly change predictions. Training
+   optimizes classification, so it does not require exact reconstruction of
+   every original weight.
+3. **The correction target was stable.** The same faulty weights were used for
+   every training batch and evaluation. Adapter parameters were treated as
+   reliable. Transfer to different patterns or changing faults was not tested.
+4. **The adapters received additional supervised training.** Five epochs on
+   45,000 labeled images provided an opportunity to improve task performance.
+   We have not separated that benefit from compensation for clustering and
+   faults.
+
+The accuracy changes make the attribution issue explicit:
+
+| Stage | Test accuracy | Change from preceding stage |
+| --- | --- | --- |
+| Original clean model | 92.28% | — |
+| Clustered model, zero faults | 83.29% | −8.99 pp |
+| Selected static fault pattern | 79.91% | −3.38 pp |
+| Same pattern with trained LoRA | 91.76% | +11.85 pp |
+
+**The 11.85-point gain measures improvement from the combined clustered and
+faulty starting model.** It exceeds the 3.38-point drop caused by this fault
+pattern alone, so the entire gain cannot be attributed specifically to fault
+compensation. The adapted result remained 0.52 points below the original clean
+test reference.
+
+The audit confirmed preservation of all 122 base state tensors, and the selected
+validation accuracy (92.32%) was close to test accuracy (91.76%). These checks
+support the reported measurement. They do not establish the cause of recovery
+or its consistency across patterns and training seeds.
+
+Step 9 should use the same adapter architecture and training budget on clean
+and zero-fault clustered models, repeat recovery across saved patterns and
+training seeds, and evaluate adapters on unseen patterns. These controls will
+help distinguish additional task training, compensation for clustering, and
+compensation for faults. They have not been run.
+
+### Commands, files, and verification
+
+Run a fresh experiment from the project root with:
+
+```zsh
+.venv/bin/python scripts/run_lora_recovery.py --config configs/resnet18_cifar10_lora.json
+```
+
+Existing output directories are preserved; choose a new `run_id` in a copied
+configuration for another run. Rank, alpha, layer names, pattern, seed, and
+training recipe are explicit configuration fields. `target_names: null` selects
+all Conv2d/Linear layers; a list selects specific existing layers. Grouped
+convolutions are rejected by this implementation.
+
+- `src/fault_lora/models/lora.py`: convolutional/linear residuals, adapter-only
+  state loading, and reconstruction of original base state names.
+- `src/fault_lora/training/recovery.py`: source audits, frozen-state training,
+  validation selection, checkpoint reconstruction, paired evaluation, and plots.
+- `tests/test_lora_recovery.py`: seven offline checks covering effective-kernel
+  equivalence, zero-output identity, gradient isolation, normalization buffers,
+  checkpoint reloads, invalid input, and a complete temporary recovery workflow.
+
+Generated results are in
+`results/resnet18-cifar10-lora-r4-p001-seed52-train42/`: configuration, source
+hashes, environment, original splits/preprocessing, fault counts, adapter layout,
+epoch history, before/after metrics, manifest, verification, and PNG/PDF plots.
+Adapter-only `initial.pt`, `best.pt`, and `last.pt` are in the matching checkpoint
+directory. Checkpoints record the exact source encoding/pattern hashes and
+adapter architecture; `load_recovered_model(checkpoint_path, project_root)`
+reconstructs the faulty base and loads the saved adapters without downloads.
+These are evaluation checkpoints; optimizer state for interrupted-run resume
+is not saved. The code and inputs from Steps 3–7 were verified unchanged.
+
+The full offline suite passes **44 tests**. The completed run also verified
+zero-output identity, base preservation each epoch, exact selected-adapter logits
+on reload, consistency of the validation selection and metrics, and preserved
+source artifacts. The adapter design applies the frozen-base low-rank principle
+from the [LoRA paper](https://arxiv.org/abs/2106.09685) to this ResNet convolution
+geometry; it is not a replication of the paper's Transformer experiments.
+
+## Next steps: 9–10 (not implemented)
+
 9. **Controlled comparisons:** compare original, clustered, faulty, and adapted
-   models; vary rank and placement and record parameter, storage, and computation overhead.
+   models, including matched adapter training on clean and zero-fault clustered
+   bases. Repeat across fault patterns and training seeds, test transfer to unseen
+   patterns, vary rank and placement, and record parameter, storage, and computation overhead.
 10. **Qwen extension:** reuse the validated memory/fault workflow with a language
     model, tokenizer, text dataset, and appropriate language-model metrics.
 
@@ -692,21 +871,6 @@ Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,
 checkpoints, preprocessing, splits, and measurements sufficient for reproduction.
 Results will only be reported after experiments are actually performed.
-
-### Planned LoRA recovery
-
-For a linear layer, the intended adapter calculation is:
-
-```text
-h = W_faulty x + (alpha / r) B(Ax)
-```
-
-The faulty base weights remain frozen while the low-rank matrices A and B are
-trained; r is the adapter rank and alpha / r is its scaling. Recovery is a
-hypothesis to test. A low-rank update need not cancel arbitrary corruption, and
-useful recovery is not guaranteed. ResNet will require convolution-compatible
-adapters where appropriate. Initial recovery comparisons would use saved fault
-patterns, with generalization to unseen patterns evaluated separately.
 
 The possible language-model extension is Qwen3-0.6B-Base, using a tokenizer,
 held-out language-model loss, and perplexity. Perplexity will not be labeled as
@@ -717,7 +881,7 @@ assumed to exist locally.
 
 ## Experimental assumptions and open choices
 
-- Steps 4–7 use 16 clusters per Conv2d/Linear weight tensor, sorted codebooks,
+- Steps 4–8 use 16 clusters per Conv2d/Linear weight tensor, sorted codebooks,
   identity index-to-level mappings, and one cell per index. These are initial
   experimental choices; group agreement and hardware calibration remain open.
 - Faults use saved static patterns, uniform cell selection, equiprobable interior
@@ -725,13 +889,14 @@ assumed to exist locally.
   completed the seven-rate sweep with five patterns per nonzero rate. A
   level-dependent hardware error model remains future work.
 - Codebooks, mapping metadata, biases, and normalization state are treated as
-  reliable. Adapter-storage reliability and its overhead must be documented when
-  recovery is implemented.
+  reliable. Step 8 treats float32 adapters as reliable and records
+  their parameter/tensor/serialized overhead; hardware overhead remains unmeasured.
 - CIFAR-10 splits, preprocessing, the eligible-cell denominator, and the initial
-  sweep rates/repetition count are recorded. Adapter ranks, placement, and the
-  recovery training configuration still require selection.
+  sweep rates/repetition count are recorded. Step 8 records the first
+  rank-4/all-layer/five-epoch recipe; wider rank/placement studies remain future work.
 - Recovery for a fixed pattern and transfer to unseen patterns are separate
-  research questions; neither outcome is assumed.
+  research questions. Step 8 measured recovery on one fixed pattern; transfer
+  to unseen patterns remains untested.
 
 ## Reference
 
