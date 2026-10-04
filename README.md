@@ -19,109 +19,27 @@ Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
 LoRA recovery and the language-model extension have not been implemented.
 
-## Step 7 milestone: baseline for LoRA recovery
+## Completed workflow
 
-![Validation and test accuracy versus actual adjacent-level fault rate for the CIFAR-10 ResNet-18 model, with individual patterns, means, sample standard deviations, and clean and clustered references.](docs/figures/resnet18-cifar10-step7-fault-sweep.png)
+1. [Repository scaffold and Python environment](#step-1-repository-scaffold-and-python-environment)
+2. [Dependencies and compute setup](#step-2-dependencies-and-compute-setup)
+3. [Clean ResNet-18 baseline](#step-3-clean-resnet-18-baseline)
+4. [Clustered-weight baseline](#step-4-clustered-weight-baseline)
+5. [Fault simulation](#step-5-fault-simulation)
+6. [Fault-injection correctness checks](#step-6-fault-injection-correctness-checks)
+7. [Fault-rate experiments](#step-7-fault-rate-experiments)
 
-The left panel shows validation accuracy on 5,000 images; the right shows test
-accuracy on 10,000 images. Light-blue points are individual static fault patterns;
-dark-blue points and bars show the mean ± one sample standard deviation across
-five patterns per nonzero rate. The green dashed line is the original clean
-reference, and the orange dotted line is the clustered zero-fault reference.
-The x-axis uses the actual fraction of eligible cells corrupted.
+## Step 1: Repository scaffold and Python environment
 
-Clean test accuracy was **92.28%**. Clustering alone reduced it to **83.29%**;
-at 10% fault probability, mean test accuracy was **64.07% ± 9.07 percentage
-points** across five patterns. These measurements use the simplified uniform
-adjacent-level simulator with 16 clusters per weight tensor. They establish the
-damaged-model baseline for the next step: training LoRA adapters and comparing
-before/after recovery on the same saved fault patterns. Recovery is not yet
-implemented.
+**Purpose:** establish an organized repository and a usable local Python environment.
 
-[Download the PDF figure](docs/figures/resnet18-cifar10-step7-fault-sweep.pdf)
-or read the [full Step 7 results and method](#repeated-fault-rate-experiments-step-7).
-The README figure files are repository assets copied from the verified run;
-generated experiment outputs remain under the ignored `results/` directory.
+We created the package layout, empty package initializers, configuration/script/test
+folders, `.gitignore`, and the initial README. Git was initialized for the project.
+A usable project-local `.venv` was inspected and reused; its executable reports
+**Python 3.11.4**. System Python was not changed. Model code and experiments were
+added only in the later steps documented below.
 
-## Intended storage representation and faults
-
-The implemented representation groups similar scalar weights into clusters within
-each eligible layer. Representative values form a lookup table, or codebook;
-each weight position stores an index into that table. For example, a weight of
-0.113 might be represented by 0.10 at codebook index 2. A memory read decodes the
-stored index and retrieves its representative weight.
-
-The starting reference is [On-Chip Deep Neural Network Storage with Multi-Level
-eNVM](https://www.eecs.tufts.edu/~mdonato/assets/papers/dac2018-envm.pdf)
-(Donato et al., DAC 2018). Its fault model concerns reads into neighboring
-physical levels, with probabilities depending on the cell configuration and
-stored level.
-
-An adjacent-level error changes a cell's physical level by one; it is distinct
-from an arbitrary binary bit flip. The level-to-information mapping determines
-which weight is retrieved. If an index spans multiple cells, a one-level change
-in one cell need not change the complete index by one, and it never means adding
-or subtracting one from the numerical weight.
-
-A uniform-probability adjacent-level simulator is implemented as an explicit
-simplification, not an exact reproduction of the reference paper. A saved,
-static fault pattern means keeping the same corruption throughout an experiment;
-it does not specify whether the mechanism uses neighboring levels or bit flips.
-
-Two sources of performance loss must be measured separately:
-
-- **Clustering (compression) loss:** replacing the original weights with
-  representatives can change predictions even when every read is correct.
-  Compare the original model with the clustered, fault-free model.
-- **Fault loss:** incorrect reads cause additional substitutions. Compare the
-  clustered, fault-free model with the same representation under faults.
-
-## LoRA recovery hypothesis
-
-For a linear layer, the intended adapter calculation is:
-
-```text
-h = W_faulty x + (alpha / r) B(Ax)
-```
-
-The faulty base weights remain frozen while the low-rank matrices A and B are
-trained; r is the adapter rank and alpha / r is its scaling. Recovery is a
-hypothesis to test. A low-rank update need not cancel arbitrary corruption, and
-useful recovery is not guaranteed. ResNet will require convolution-compatible
-adapters where appropriate. Initial recovery comparisons would use saved fault
-patterns, with generalization to unseen patterns evaluated separately.
-
-## Proposed model workflow
-
-The first vision workflow will use ResNet-18. If an ImageNet-pretrained model is
-evaluated on CIFAR-10, its classifier must be adapted and the model trained or
-fine-tuned on the designated training split before establishing a clean baseline.
-The checkpoint, preprocessing, data splits, and evaluation settings will be
-saved. Classification accuracy will be the main vision metric.
-
-The first research deliverable will plot injected fault count or a precisely
-defined fault rate against model performance, include the no-fault baseline, and
-repeat independent fault patterns to measure variability. Each run will start
-from the appropriate uncorrupted baseline rather than accumulating damage.
-Later comparisons will include original, clustered, faulty, and LoRA-adapted
-models, with controls for recovery from clustering and from faults.
-
-After validating the vision workflow, a possible extension is Qwen3-0.6B-Base.
-It will reuse the memory/fault component with suitable text preprocessing and a
-tokenizer. Initial language-model metrics will be held-out loss and perplexity;
-perplexity will not be labeled as accuracy.
-
-The structure leaves room for integration with Arya's shared fault-injection
-framework and coordination with Meera's TinyBERT benchmarking. No shared
-simulator is assumed to exist locally. Future model evaluation code should use a
-separate memory/fault component so it can be replaced without rewriting the
-evaluation workflow.
-
-## Directory purposes
-
-Model, data, evaluation, and baseline-training code are implemented for Step 3.
-The memory package implements Step 4 clustering and fault-free representation
-and Step 5 reusable static adjacent-level fault simulation.
+### Project structure
 
 | Path | Purpose |
 | --- | --- |
@@ -129,11 +47,12 @@ and Step 5 reusable static adjacent-level fault simulation.
 | `src/fault_lora/models/` | ResNet-18 loading and clean checkpoint restoration; future adapter integration. |
 | `src/fault_lora/data/` | Dataset preparation, preprocessing, and split handling. |
 | `src/fault_lora/memory/` | Scalar clustering, codebooks, typed indices, reversible physical mappings, and static adjacent-level patterns; future shared component integration. |
-| `src/fault_lora/evaluation/` | Metrics and controlled model comparisons. |
+| `src/fault_lora/evaluation/` | Classification metrics, artifact audits, controlled comparisons, and fault-rate plots. |
 | `src/fault_lora/training/` | Clean CIFAR-10 fine-tuning; future adapter-training workflows. |
-| `configs/` | Baseline, fault-generation, and fault-audit configurations. |
-| `scripts/` | Environment checks, baseline commands, static fault generation, and the full-model audit. |
+| `configs/` | Baseline, fault-generation, audit, and sweep configurations. |
+| `scripts/` | Environment checks, baseline commands, static fault generation, audit, and fault-rate sweeps. |
 | `tests/` | Offline baseline, representation, and integrity checks. |
+| `docs/figures/` | Repository copies of the verified Step 7 PNG/PDF figures embedded in this README. |
 | `results/` | Generated measurements and plots; ignored by Git. |
 | `checkpoints/` | Pretrained weights, clean checkpoints, clustered encodings, and decoded checkpoints; ignored by Git. |
 | `data/` | Downloaded CIFAR-10 files; ignored by Git. |
@@ -143,9 +62,114 @@ and Step 5 reusable static adjacent-level fault simulation.
 
 The root-anchored `/data/` ignore rule excludes downloaded datasets while
 preserving the source package `src/fault_lora/data/`. Generated-output directories
-are not tracked.
+are ignored; the selected README figures are copied into `docs/figures/`.
 
-## Clean ResNet-18 baseline (Step 3)
+### Virtual environment
+
+From the project root, activate the environment in the detected zsh shell:
+
+```sh
+source .venv/bin/activate
+```
+
+The same activation command works in bash. Verify or invoke the environment
+explicitly, without relying on activation persisting across separate shells:
+
+```sh
+.venv/bin/python --version
+```
+
+For a fresh checkout without a `.venv`, use an existing Python 3.11 interpreter
+to reproduce this dependency environment. Inspect any existing environment
+before creating one:
+
+```sh
+python3.11 --version
+python3.11 -m venv .venv
+source .venv/bin/activate
+.venv/bin/python --version
+```
+
+**Verification:** required directories and initializers existed, the environment's
+Python executable worked, and generated datasets/checkpoints/results and `.venv/`
+were ignored while `src/fault_lora/data/` remained available to track.
+
+## Step 2: Dependencies and compute setup
+
+**Purpose:** install compatible dependencies and verify the available compute devices.
+
+We installed the core libraries into the existing `.venv`, pinned the direct
+versions, and generated the macOS arm64 / CPython 3.11 lockfile with wheel hashes.
+CPU and MPS tensor execution were verified before model experiments began.
+
+| Package | Installed version | Implemented role |
+| --- | --- | --- |
+| PyTorch (`torch`) | 2.14.1 | Tensor operations, ResNet training, and inference. |
+| `torchvision` | 0.29.1 | ResNet models, CIFAR-10 datasets, and preprocessing. |
+| NumPy | 2.4.6 | Array handling and experiment data. |
+| scikit-learn | 1.9.1 | Per-tensor weight clustering. |
+| Matplotlib | 3.11.2 | Validation/test fault-rate plots. |
+
+These versions were selected by resolving compatible binary wheels for the
+actual environment and verifying them together. Transformers and PEFT are
+deferred until the language-model or adapter steps need them.
+
+On a matching macOS arm64 / CPython 3.11 environment, install the full lockfile:
+
+```sh
+.venv/bin/python -m pip install --index-url https://pypi.org/simple --only-binary=:all: --require-hashes -r requirements-macos-arm64.lock.txt
+.venv/bin/python -m pip check
+.venv/bin/python scripts/check_environment.py
+```
+
+The lockfile pins all 28 resolved packages, including transitive dependencies
+and the setuptools version required by PyTorch, with their exact wheel hashes.
+Pip itself is not pinned. The native macOS wheels require macOS 14 or later.
+This lockfile is specific to CPython 3.11 on macOS arm64; another platform or
+Python minor version needs its own resolution and verification. The shorter
+`requirements.txt` records direct versions, but does not lock transitive versions
+or wheel hashes. A Linux/CUDA environment has not been configured or tested.
+
+The check prints a JSON report of the Python/platform versions, package
+versions, backend availability, selected device, and verification results.
+It imports all five libraries, checks the headless Matplotlib Agg backend,
+tests the NumPy/PyTorch bridge, performs tiny float32 matrix multiplications on
+CPU and the selected device, and exercises a compiled torchvision operator on
+CPU. It does not instantiate models, download anything, train, evaluate datasets,
+or write plots. Import and tensor failures cause a nonzero exit status.
+
+For an explicit device check:
+
+```sh
+.venv/bin/python scripts/check_environment.py --device cpu
+.venv/bin/python scripts/check_environment.py --device mps
+```
+
+Automatic selection chooses an available CUDA device, then MPS, then CPU. An
+explicit unavailable device fails rather than silently switching devices.
+
+### Local compute
+
+The inspected machine is an Apple M3 Pro MacBook Pro running macOS 26.6, with
+11 CPU cores, a 14-core Apple GPU, and 18 GB of unified memory. Python runs
+natively as arm64. The installed PyTorch build includes MPS and has no available
+CUDA backend on this machine.
+
+Library imports, CPU tensor checks, and the compiled torchvision operator check
+passed. MPS was unavailable inside the Codex sandbox, but an explicit MPS check
+outside the sandbox passed, including GPU matrix multiplication and transfer
+back to CPU. Both CPU and MPS execution are verified; run future GPU workflows
+in a process that has GPU access.
+
+PyTorch's [MPS backend](https://docs.pytorch.org/docs/2.14/notes/mps.html) provides
+GPU tensor execution through Apple's Metal framework. Backend availability must
+be checked in the process that will run the experiment; restricted execution
+environments may hide GPU access. These installation checks do not establish
+model throughput, training capacity, or compatibility of every model operator.
+
+## Step 3: Clean ResNet-18 baseline
+
+**Purpose:** fine-tune an ImageNet-pretrained ResNet-18 for CIFAR-10 and save a reproducible clean reference.
 
 The selected workflow is CIFAR-10 with torchvision's
 [ImageNet-pretrained ResNet-18](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html)
@@ -233,7 +257,23 @@ Offline checks require no model or dataset downloads:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-## Clustered-weight baseline (Step 4)
+## Step 4: Clustered-weight baseline
+
+**Purpose:** store weights using codebooks and indices, then measure clustering loss with zero faults.
+
+The implemented representation groups similar scalar weights into clusters within
+each eligible layer. Representative values form a lookup table, or codebook;
+each weight position stores an index into that table. For example, a weight of
+0.113 might be represented by 0.10 at codebook index 2. A memory read decodes the
+stored index and retrieves its representative weight.
+
+Two sources of performance loss must be measured separately:
+
+- **Clustering (compression) loss:** replacing the original weights with
+  representatives can change predictions even when every read is correct.
+  Compare the original model with the clustered, fault-free model.
+- **Fault loss:** incorrect reads cause additional substitutions. Compare the
+  clustered, fault-free model with the same representation under faults.
 
 The first configuration uses **16 clusters per eligible weight tensor** with
 seed 42. Eligible tensors are all 21 ResNet-18 Conv2d/Linear weights, including
@@ -330,7 +370,26 @@ New checks cover label remapping, deterministic encoding, exact handling of
 constant/small tensors, reversible mappings, invalid representations, model
 preservation, serialization, storage accounting, and source-integrity rejection.
 
-## Static adjacent-level fault simulation (Step 5)
+## Step 5: Fault simulation
+
+**Purpose:** simulate adjacent physical-level read errors and save a fixed fault pattern with exact counts.
+
+The starting reference is [On-Chip Deep Neural Network Storage with Multi-Level
+eNVM](https://www.eecs.tufts.edu/~mdonato/assets/papers/dac2018-envm.pdf)
+(Donato et al., DAC 2018). Its fault model concerns reads into neighboring
+physical levels, with probabilities depending on the cell configuration and
+stored level.
+
+An adjacent-level error changes a cell's physical level by one; it is distinct
+from an arbitrary binary bit flip. The level-to-information mapping determines
+which weight is retrieved. If an index spans multiple cells, a one-level change
+in one cell need not change the complete index by one, and it never means adding
+or subtracting one from the numerical weight.
+
+A uniform-probability adjacent-level simulator is implemented as an explicit
+simplification, not an exact reproduction of the reference paper. A saved,
+static fault pattern means keeping the same corruption throughout an experiment;
+it does not specify whether the mechanism uses neighboring levels or bit flips.
 
 The initial configuration uses a **0.01 selection probability per eligible
 cell**, seed 42, and the saved k=16 encoding from Step 4. The denominator is
@@ -431,11 +490,13 @@ weight accounting, malformed patterns, and invalid configuration.
 
 **No dataset accuracy or loss was measured in Step 5.** The synthetic forward
 check establishes that the saved model runs; it does not quantify damage.
-Step 6 has audited the complete ResNet artifacts; Step 7 will measure fault
+Step 6 audited the complete ResNet artifacts; Step 7 measured fault
 loss against the **83.29% clustered zero-fault test baseline**, keeping it
 separate from the original clean model's 92.28% accuracy and clustering loss.
 
-## Full-model fault correctness audit (Step 6)
+## Step 6: Fault-injection correctness checks
+
+**Purpose:** verify the simulator and saved full-model artifacts before measuring fault damage.
 
 The completed CPU audit checks the actual saved ResNet encoding, static pattern,
 and faulty checkpoint across 21 clustered tensors, 11,172,032 eligible cells,
@@ -492,7 +553,33 @@ Hardware calibration remains separate. Step 7 evaluated accuracy across
 fault probabilities and repeated patterns, always starting from the clustered
 zero-fault baseline.
 
-## Repeated fault-rate experiments (Step 7)
+## Step 7: Fault-rate experiments
+
+**Purpose:** measure performance across fault rates and independent patterns, producing the baseline for future LoRA recovery.
+
+![Validation and test accuracy versus actual adjacent-level fault rate for the CIFAR-10 ResNet-18 model, with individual patterns, means, sample standard deviations, and clean and clustered references.](docs/figures/resnet18-cifar10-step7-fault-sweep.png)
+
+The left panel shows validation accuracy on 5,000 images; the right shows test
+accuracy on 10,000 images. Light-blue points are individual static fault patterns;
+dark-blue points and bars show the mean ± one sample standard deviation across
+five patterns per nonzero rate. The green dashed line is the original clean
+reference, and the orange dotted line is the clustered zero-fault reference.
+The x-axis uses the actual fraction of eligible cells corrupted.
+
+Clean test accuracy was **92.28%**. Clustering alone reduced it to **83.29%**;
+at 10% fault probability, mean test accuracy was **64.07% ± 9.07 percentage
+points** across five patterns. These measurements use the simplified uniform
+adjacent-level simulator with 16 clusters per weight tensor. They establish the
+damaged-model baseline for the next step: training LoRA adapters and comparing
+before/after recovery on the same saved fault patterns. Recovery is not yet
+implemented.
+
+[Download the PDF figure](docs/figures/resnet18-cifar10-step7-fault-sweep.pdf).
+Detailed measurements and the method follow below.
+The README figure files are repository assets copied from the verified run;
+generated experiment outputs remain under the ignored `results/` directory.
+
+### Measured results
 
 The completed MPS sweep measured the following results. Uncertainty is sample
 standard deviation across five fault patterns, expressed in percentage points;
@@ -592,31 +679,8 @@ pattern, and all previously audited artifacts are preserved. The experiment
 continues to use uniform adjacent-level probabilities and one cell per index;
 it is not a hardware-calibrated result.
 
-## Planned research roadmap
+## Next steps: 8–10 (not implemented)
 
-1. **Repository scaffold and local environment:** completed; establish folders,
-   package initializers, ignore rules, documentation, and a local virtual environment.
-2. **Dependencies and compute setup:** completed; inspect the local hardware,
-   install compatible macOS arm64 wheels, lock dependency versions and hashes,
-   and check library imports and tensor execution. See the environment section
-   for installed versions and compute details.
-3. **Clean ResNet baseline:** completed; fine-tuned ImageNet-pretrained ResNet-18
-   on CIFAR-10 and saved the validation-selected checkpoint, evaluation settings,
-   splits, provenance, and measured clean performance.
-4. **Clustered-weight baseline:** completed; saved k=16 per-tensor codebooks,
-   indices, mappings, dense reconstruction, provenance, storage accounting, and
-   paired measurements of clustering loss with zero faults.
-5. **Fault simulation:** completed; implemented a simplified adjacent-level
-   simulator and saved a static p=0.01, seed-42 pattern, faulty dense checkpoint,
-   exact transition/count records, assumptions, and source provenance.
-6. **Fault-injection correctness checks:** completed; eight full-ResNet audit
-   checks passed for zero-fault identity, independent transition decoding,
-   boundaries, reproducibility, static replay, and source preservation; the
-   full offline unit suite contains 31 passing tests.
-7. **Fault-rate experiments:** completed; evaluated seven probabilities with
-   five independent patterns at each nonzero rate (31 total), replayed clean
-   and clustered references, and saved individual/aggregate measurements,
-   exact patterns, source provenance, verification, and PNG/PDF plots.
 8. **LoRA recovery:** freeze base parameters and train suitable adapters on the
    training split using saved patterns; evaluate transfer to unseen patterns separately.
 9. **Controlled comparisons:** compare original, clustered, faulty, and adapted
@@ -629,116 +693,43 @@ must document assumptions and save configurations, seeds, fault patterns,
 checkpoints, preprocessing, splits, and measurements sufficient for reproduction.
 Results will only be reported after experiments are actually performed.
 
-## Python environment and dependencies
+### Planned LoRA recovery
 
-The existing project-local `.venv` was inspected and reused. Its Python executable
-works and reports **Python 3.11.4**. Step 2 installed the following core packages
-and their dependencies into this environment. System Python was not changed.
+For a linear layer, the intended adapter calculation is:
 
-| Package | Installed version | Planned role |
-| --- | --- | --- |
-| PyTorch (`torch`) | 2.14.1 | Tensor operations and future model execution. |
-| `torchvision` | 0.29.1 | Future ResNet models, vision datasets, and preprocessing. |
-| NumPy | 2.4.6 | Array handling and future experiment data. |
-| scikit-learn | 1.9.1 | Weight clustering and future analysis. |
-| Matplotlib | 3.11.2 | Future plots. |
-
-These versions were selected by resolving compatible binary wheels for the
-actual environment and verifying them together. Transformers and PEFT are
-deferred until the language-model or adapter steps need them.
-
-From the project root, activate the environment in the detected zsh shell:
-
-```sh
-source .venv/bin/activate
+```text
+h = W_faulty x + (alpha / r) B(Ax)
 ```
 
-The same activation command works in bash. Verify or invoke the environment
-explicitly, without relying on activation persisting across separate shells:
+The faulty base weights remain frozen while the low-rank matrices A and B are
+trained; r is the adapter rank and alpha / r is its scaling. Recovery is a
+hypothesis to test. A low-rank update need not cancel arbitrary corruption, and
+useful recovery is not guaranteed. ResNet will require convolution-compatible
+adapters where appropriate. Initial recovery comparisons would use saved fault
+patterns, with generalization to unseen patterns evaluated separately.
 
-```sh
-.venv/bin/python --version
-```
+The possible language-model extension is Qwen3-0.6B-Base, using a tokenizer,
+held-out language-model loss, and perplexity. Perplexity will not be labeled as
+accuracy. The repository leaves room for integrating Arya's shared fault framework
+and coordinating with Meera's TinyBERT benchmarking; no shared simulator is
+assumed to exist locally.
 
-For a fresh checkout without a `.venv`, use an existing Python 3.11 interpreter
-to reproduce this dependency environment. Inspect any existing environment
-before creating one:
 
-```sh
-python3.11 --version
-python3.11 -m venv .venv
-source .venv/bin/activate
-.venv/bin/python --version
-```
+## Experimental assumptions and open choices
 
-On a matching macOS arm64 / CPython 3.11 environment, install the full lockfile:
-
-```sh
-.venv/bin/python -m pip install --index-url https://pypi.org/simple --only-binary=:all: --require-hashes -r requirements-macos-arm64.lock.txt
-.venv/bin/python -m pip check
-.venv/bin/python scripts/check_environment.py
-```
-
-The lockfile pins all 28 resolved packages, including transitive dependencies
-and the setuptools version required by PyTorch, with their exact wheel hashes.
-Pip itself is not pinned. The native macOS wheels require macOS 14 or later.
-This lockfile is specific to CPython 3.11 on macOS arm64; another platform or
-Python minor version needs its own resolution and verification. The shorter
-`requirements.txt` records direct versions, but does not lock transitive versions
-or wheel hashes. A Linux/CUDA environment has not been configured or tested.
-
-The check prints a JSON report of the Python/platform versions, package
-versions, backend availability, selected device, and verification results.
-It imports all five libraries, checks the headless Matplotlib Agg backend,
-tests the NumPy/PyTorch bridge, performs tiny float32 matrix multiplications on
-CPU and the selected device, and exercises a compiled torchvision operator on
-CPU. It does not instantiate models, download anything, train, evaluate datasets,
-or write plots. Import and tensor failures cause a nonzero exit status.
-
-For an explicit device check:
-
-```sh
-.venv/bin/python scripts/check_environment.py --device cpu
-.venv/bin/python scripts/check_environment.py --device mps
-```
-
-Automatic selection chooses an available CUDA device, then MPS, then CPU. An
-explicit unavailable device fails rather than silently switching devices.
-
-### Local compute
-
-The inspected machine is an Apple M3 Pro MacBook Pro running macOS 26.6, with
-11 CPU cores, a 14-core Apple GPU, and 18 GB of unified memory. Python runs
-natively as arm64. The installed PyTorch build includes MPS and has no available
-CUDA backend on this machine.
-
-Library imports, CPU tensor checks, and the compiled torchvision operator check
-passed. MPS was unavailable inside the Codex sandbox, but an explicit MPS check
-outside the sandbox passed, including GPU matrix multiplication and transfer
-back to CPU. Both CPU and MPS execution are verified; run future GPU workflows
-in a process that has GPU access.
-
-PyTorch's [MPS backend](https://docs.pytorch.org/docs/2.14/notes/mps.html) provides
-GPU tensor execution through Apple's Metal framework. Backend availability must
-be checked in the process that will run the experiment; restricted execution
-environments may hide GPU access. These installation checks do not establish
-model throughput, training capacity, or compatibility of every model operator.
-
-## Experimental assumptions to confirm
-
-- The initial Step 4 representation uses 16 clusters per Conv2d/Linear weight
-  tensor, sorted codebooks, and one cell per index with identity level mapping.
-  These are documented experimental choices; group agreement and eventual hardware
-  calibration remain open. Step 5 implements inward transitions at boundaries.
-- Step 5 uses saved static patterns and uniform p=0.01 cell selection with
-  equiprobable interior directions. Hardware calibration and a level-dependent
-  error model remain open; these initial probabilities are experimental choices.
-- Codebooks and adapter parameters may initially use reliable storage. Their
-  storage overhead must still be included in later efficiency comparisons.
-- CIFAR-10 and the initial baseline configuration are selected and documented
-  above. The fault-rate denominator is eligible scalar index cells; sweep rates,
-  repetition count, adapter ranks, and placement still require agreement before
-  the corresponding fault/recovery experiments.
+- Steps 4–7 use 16 clusters per Conv2d/Linear weight tensor, sorted codebooks,
+  identity index-to-level mappings, and one cell per index. These are initial
+  experimental choices; group agreement and hardware calibration remain open.
+- Faults use saved static patterns, uniform cell selection, equiprobable interior
+  directions, and inward transitions at boundaries. Step 5 used p=0.01; Step 7
+  completed the seven-rate sweep with five patterns per nonzero rate. A
+  level-dependent hardware error model remains future work.
+- Codebooks, mapping metadata, biases, and normalization state are treated as
+  reliable. Adapter-storage reliability and its overhead must be documented when
+  recovery is implemented.
+- CIFAR-10 splits, preprocessing, the eligible-cell denominator, and the initial
+  sweep rates/repetition count are recorded. Adapter ranks, placement, and the
+  recovery training configuration still require selection.
 - Recovery for a fixed pattern and transfer to unseen patterns are separate
   research questions; neither outcome is assumed.
 
