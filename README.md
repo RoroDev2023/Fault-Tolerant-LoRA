@@ -19,6 +19,30 @@ Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
 LoRA recovery and the language-model extension have not been implemented.
 
+## Step 7 milestone: baseline for LoRA recovery
+
+![Validation and test accuracy versus actual adjacent-level fault rate for the CIFAR-10 ResNet-18 model, with individual patterns, means, sample standard deviations, and clean and clustered references.](docs/figures/resnet18-cifar10-step7-fault-sweep.png)
+
+The left panel shows validation accuracy on 5,000 images; the right shows test
+accuracy on 10,000 images. Light-blue points are individual static fault patterns;
+dark-blue points and bars show the mean ± one sample standard deviation across
+five patterns per nonzero rate. The green dashed line is the original clean
+reference, and the orange dotted line is the clustered zero-fault reference.
+The x-axis uses the actual fraction of eligible cells corrupted.
+
+Clean test accuracy was **92.28%**. Clustering alone reduced it to **83.29%**;
+at 10% fault probability, mean test accuracy was **64.07% ± 9.07 percentage
+points** across five patterns. These measurements use the simplified uniform
+adjacent-level simulator with 16 clusters per weight tensor. They establish the
+damaged-model baseline for the next step: training LoRA adapters and comparing
+before/after recovery on the same saved fault patterns. Recovery is not yet
+implemented.
+
+[Download the PDF figure](docs/figures/resnet18-cifar10-step7-fault-sweep.pdf)
+or read the [full Step 7 results and method](#repeated-fault-rate-experiments-step-7).
+The README figure files are repository assets copied from the verified run;
+generated experiment outputs remain under the ignored `results/` directory.
+
 ## Intended storage representation and faults
 
 The implemented representation groups similar scalar weights into clusters within
