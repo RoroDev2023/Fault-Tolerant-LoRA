@@ -14,13 +14,16 @@ evaluated on CIFAR-10, and their configurations, splits, preprocessing,
 checkpoints/encodings, provenance, and measured results are saved locally. The
 original clean checkpoint is preserved. A simplified adjacent-level simulator
 has saved one static 1%-probability fault pattern and its reconstructed faulty
-checkpoint. All eight full-model Step 6 audit checks and 44 unit tests pass.
+checkpoint. All eight full-model Step 6 audit checks and 51 unit tests pass.
 Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
 Step 8 trained rank-4 LoRA adapters for five epochs on one saved 1% pattern,
 with all base parameters and normalization buffers frozen. Its paired test
 accuracy changed from 79.91% to 91.76%.
-Controlled comparisons and the language-model extension remain future work.
+Step 9a generalized that recovery code to clean, clustered, and faulty bases,
+added a batch runner and an evaluation-only adapter-transfer utility, and ran
+no new training. Controlled comparisons and the language-model extension remain
+future work.
 
 ## Completed workflow
 
@@ -32,6 +35,7 @@ Controlled comparisons and the language-model extension remain future work.
 6. [Fault-injection correctness checks](#step-6-fault-injection-correctness-checks)
 7. [Fault-rate experiments](#step-7-fault-rate-experiments)
 8. [LoRA recovery](#step-8-lora-recovery)
+9. [Generalized recovery runner (9a)](#step-9a-generalized-recovery-runner)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -52,9 +56,9 @@ added only in the later steps documented below.
 | `src/fault_lora/data/` | Dataset preparation, preprocessing, and split handling. |
 | `src/fault_lora/memory/` | Scalar clustering, codebooks, typed indices, reversible physical mappings, and static adjacent-level patterns; future shared component integration. |
 | `src/fault_lora/evaluation/` | Classification metrics, artifact audits, controlled comparisons, and fault-rate plots. |
-| `src/fault_lora/training/` | Clean CIFAR-10 fine-tuning and adapter-only recovery training. |
+| `src/fault_lora/training/` | Clean CIFAR-10 fine-tuning, adapter-only recovery training on any base, the recovery matrix runner, and adapter-transfer evaluation. |
 | `configs/` | Baseline, fault-generation, audit, sweep, and LoRA recovery configurations. |
-| `scripts/` | Environment checks, baselines, fault generation/audits, sweeps, and LoRA recovery. |
+| `scripts/` | Environment checks, baselines, fault generation/audits, sweeps, LoRA recovery, and the recovery matrix. |
 | `tests/` | Offline baseline, representation, and integrity checks. |
 | `docs/figures/` | Repository copies of verified Step 7 and Step 8 PNG/PDF figures embedded in this README. |
 | `results/` | Generated measurements and plots; ignored by Git. |
@@ -857,6 +861,134 @@ on reload, consistency of the validation selection and metrics, and preserved
 source artifacts. The adapter design applies the frozen-base low-rank principle
 from the [LoRA paper](https://arxiv.org/abs/2106.09685) to this ResNet convolution
 geometry; it is not a replication of the paper's Transformer experiments.
+
+## Step 9a: generalized recovery runner
+
+**Purpose:** let the unchanged Step 8 LoRA recipe run on any base, so later
+controls can separate additional task training, clustering repair, and fault
+repair. **This step ran no training and measured no new accuracy.**
+
+### Method
+
+`RecoveryConfig` gained two fields; every other field and default is unchanged,
+so `configs/resnet18_cifar10_lora.json` still loads and means what it did.
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `base_kind` | `"clean"`, `"clustered"`, `"faulty"` (default) | Which frozen state the adapters are attached to. |
+| `pattern_id` | saved Step 7 ID, or `null` | Required for `"faulty"`; must be `null` otherwise. |
+| `clean_checkpoint_sha256` | 64 hex characters, or `null` (default) | Optional pin; when set, the clean checkpoint must hash to it for every base kind. |
+
+`build_base_state` produces the frozen state:
+
+| `base_kind` | Frozen base | Before-LoRA count must equal |
+| --- | --- | --- |
+| `clean` | Step 3 validation-selected checkpoint; its non-clustered tensors must equal the encoding's untouched state. | Step 7 clean replay |
+| `clustered` | `decode_state` of the Step 4 encoding; no pattern applied. | Step 7 clustered zero-fault replay |
+| `faulty` | `apply_fault_pattern` of the same encoding and the saved pattern: the Step 8 path. | That pattern's Step 7 record |
+
+All three share the Step 8 source audit, splits, preprocessing, recipe, epoch-0
+competition, validation-only selection, per-epoch exact-equality check of all
+base tensors, paired test evaluation after selection, and saved artifacts. A
+clean base has no stored cells, so its fault probability, corrupted-cell count,
+and realized rate are recorded as `null`; a clustered base records zero.
+`fault_counts.json` is written only for a faulty base.
+
+`scripts/run_lora_matrix.py` takes a configuration whose `runs` list declares
+each run as exactly `base_kind`, `pattern_id`, `rank`, `alpha`, and `seed`; the
+shared recipe fields sit beside the list. Run IDs follow
+`resnet18-cifar10-lora-{base}-{pattern or none}-r{rank}-train{seed}`. Alpha is
+not part of the ID, so two runs differing only in alpha are rejected. Before
+anything is created, the runner rejects an existing matrix directory, any
+existing run directory, and any pattern that is not a saved nonzero Step 7
+pattern. It then executes each run as an independent `run_recovery` call with
+its own result and checkpoint directories, rewrites the summary and status
+after every run, and stops at the first failure, recording the failed run ID.
+It never skips or resumes a run.
+
+`evaluate_adapter_on_base(adapter_checkpoint, base_kind, pattern_id, project_root)`
+loads a saved adapter onto a possibly different base and returns
+validation/test metrics with the adapter and with its output zeroed. The split
+hash, encoding fingerprint, architecture, classes, preprocessing, and complete
+adapter layout must match the checkpoint. It trains nothing, selects nothing,
+and writes nothing; `load_adapter_on_base` returns the model itself.
+
+### Checks performed
+
+No table of accuracies is reported because nothing was trained or evaluated on
+CIFAR-10. The following were checked on the real saved artifacts, on CPU, with
+synthetic inputs only:
+
+| Check | Result |
+| --- | --- |
+| Step 7 pattern IDs | `rate01`–`rate06` are 0.1%, 0.5%, 1%, 2%, 5%, 10% with seeds 42–46, 47–51, 52–56, 57–61, 62–66, 67–71, as in `plan.json` and the 31 saved pattern files. |
+| Clean checkpoint hash | `7a9d200cbce14c01ddadb68c3a94ce8a9a7990a4cfcdfb7d9f5ae4bdfac47439`; a different configured digest is rejected. |
+| Base states | Each kind builds 122 tensors. Clean and clustered differ in 11,172,030 scalars; clustered and `rate03-seed52` differ in 111,322, that pattern's recorded corrupted-cell count. |
+| Step 8 adapter | The saved `best.pt` (epoch 3) still loads through `load_recovered_model`; `load_adapter_on_base` on the same pattern gives exactly equal logits, and loading onto the clean, clustered, and `rate03-seed53` bases runs with finite, different logits. |
+| Existing artifacts | SHA-256 of every file under `results/` and `checkpoints/` was identical before and after. |
+
+### Commands and files
+
+```zsh
+.venv/bin/python scripts/run_lora_matrix.py --config configs/<matrix>.json
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+`--config` is required; no matrix configuration is committed yet because no
+experiment has been declared. A configuration has this form:
+
+```json
+{
+  "matrix_id": "resnet18-cifar10-lora-matrix-example",
+  "clean_checkpoint_sha256": "7a9d200cbce14c01ddadb68c3a94ce8a9a7990a4cfcdfb7d9f5ae4bdfac47439",
+  "runs": [
+    {"base_kind": "clean", "pattern_id": null, "rank": 4, "alpha": 4.0, "seed": 42},
+    {"base_kind": "clustered", "pattern_id": null, "rank": 4, "alpha": 4.0, "seed": 42},
+    {"base_kind": "faulty", "pattern_id": "rate03-seed52", "rank": 4, "alpha": 4.0, "seed": 42}
+  ]
+}
+```
+
+Omitted shared fields take the Step 8 values (five epochs, batch size 128,
+AdamW learning rate 0.001, weight decay 0.0001, cosine schedule, gradient
+clipping 1.0, MPS).
+
+- `src/fault_lora/training/recovery.py`: `base_kind`, `build_base_state`,
+  `load_adapter_on_base`, and `evaluate_adapter_on_base`.
+- `src/fault_lora/training/recovery_matrix.py`: `MatrixConfig`, `run_matrix`,
+  and `verify_matrix`.
+- `tests/test_lora_matrix.py`: seven offline checks on tiny synthetic models.
+
+A matrix writes `results/<matrix_id>/`; each run writes the same files as Step 8
+under its own run ID.
+
+| Artifact | Purpose |
+| --- | --- |
+| `config.json` / `plan.json` | Declared matrix and the derived run IDs. |
+| `summary.csv` / `summary.json` | One row per run: run ID, base kind, pattern, fault probability, corrupted cells, realized rate, rank, alpha, seed, selected epoch, before/after validation and test accuracy and cross-entropy, accuracy gains, trainable parameters, and seconds. |
+| `status.json` | Completed and planned run counts; the failed run ID on failure. |
+| `verification.json` | Post-run re-read of every run: completion, configuration, summary rows against saved metrics, CSV against JSON, selected epoch recomputed from validation records, checkpoint hashes, input artifact hashes, and source-code hashes. |
+| Other JSON records | Environment, source-code hashes, and manifest with policies. |
+
+The full offline suite passes **51 tests** (44 existing, 7 new). The new tests
+cover the pattern-iff-faulty rule, loading the Step 8 configuration, the state
+built for each base kind, invalid matrix configurations, a two-run toy matrix
+with its summary and verification, rejection of unknown patterns and stopping
+at the first failure, and transfer evaluation that is exact on the adapter's
+own base and runs on other bases.
+
+### Limitations
+
+- No recovery run exists yet for a clean or clustered ResNet-18 base; the
+  attribution question from Step 8 is still open.
+- The before-LoRA check requires the exact Step 7 correct-prediction count, so a
+  run on a device that reproduces different counts fails instead of proceeding.
+- An interrupted matrix is not resumed. Its finished runs keep their
+  directories, so the remaining runs need a new configuration and `matrix_id`.
+- `evaluate_adapter_on_base` saves nothing; a transfer experiment still needs
+  its own configuration, script, and saved records.
+- Step 3–7 source files were not modified. `training/recovery.py` was, so its
+  hash differs from the one recorded by the Step 8 run.
 
 ## Next steps: 9–10 (not implemented)
 

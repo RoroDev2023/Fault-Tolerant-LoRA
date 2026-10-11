@@ -1,7 +1,7 @@
-"""Train only LoRA parameters against one previously saved static fault pattern."""
+"""Train only LoRA parameters against one frozen base: clean, clustered, or one saved static fault pattern."""
 
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import importlib.metadata
 import json
@@ -25,10 +25,15 @@ from fault_lora.evaluation.classification import evaluate_classifier
 from fault_lora.evaluation.clustered_baseline import save_torch, sha256_file, write_json
 from fault_lora.evaluation.fault_checks import require, require_state_equal
 from fault_lora.evaluation.fault_sweep import SweepConfig, prepare_sources as prepare_audited_sources, sweep_plan
+from fault_lora.memory.clustering import decode_state
 from fault_lora.memory.faults import apply_fault_pattern, encoding_fingerprint, summarize_fault_pattern, validate_parameters
 from fault_lora.models.lora import adapter_state_dict, attach_lora, base_state_dict, load_adapter_state
 from fault_lora.models.resnet import build_resnet18
 from fault_lora.training.baseline import choose_device, seed_worker
+
+
+BASE_KINDS = ("clean", "clustered", "faulty")
+BASE_LABELS = {"clean": "Clean base", "clustered": "Clustered base", "faulty": "Faulty base"}
 
 
 @dataclass
@@ -36,7 +41,7 @@ class RecoveryConfig:
     run_id: str = "resnet18-cifar10-lora-r4-p001-seed52-train42"
     source_sweep_results: str = "results/resnet18-cifar10-fault-sweep-seed42"
     source_audit_results: str = "results/resnet18-cifar10-fault-checks-seed42"
-    pattern_id: str = "rate03-seed52"
+    pattern_id: str | None = "rate03-seed52"
     rank: int = 4
     alpha: float = 4.0
     target_names: list | None = None
@@ -53,12 +58,21 @@ class RecoveryConfig:
     data_root: str = "data"
     results_root: str = "results"
     checkpoint_root: str = "checkpoints"
+    # Step 8 configurations predate these fields; their defaults reproduce that path.
+    base_kind: str = "faulty"
+    clean_checkpoint_sha256: str | None = None
 
     def validate(self):
         validate_parameters(0, self.seed)
-        for name in ("run_id", "pattern_id"):
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", getattr(self, name)):
+        if self.base_kind not in BASE_KINDS:
+            raise ValueError(f"base_kind must be one of {BASE_KINDS}")
+        if (self.pattern_id is not None) != (self.base_kind == "faulty"):
+            raise ValueError("pattern_id is required for a faulty base and must be null otherwise")
+        for name in ("run_id", "pattern_id") if self.base_kind == "faulty" else ("run_id",):
+            if not isinstance(getattr(self, name), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", getattr(self, name)):
                 raise ValueError(f"{name} must be a simple name")
+        if self.clean_checkpoint_sha256 is not None and (not isinstance(self.clean_checkpoint_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.clean_checkpoint_sha256)):
+            raise ValueError("clean_checkpoint_sha256 must be null or a full lowercase SHA-256 digest")
         for name, minimum in (("rank", 1), ("epochs", 1), ("batch_size", 1), ("evaluation_batch_size", 1), ("cpu_threads", 1), ("num_workers", 0)):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
@@ -75,7 +89,11 @@ class RecoveryConfig:
 
 
 def prepare_sources(root, config):
-    """Verify the audit, sweep provenance, and exact selected pattern before training."""
+    """Verify the audit, sweep provenance, and the configured base before training.
+
+    The record holds the base's previously measured Step 7 validation/test results:
+    the selected pattern for a faulty base, the replayed references otherwise.
+    """
     directory = root / config.source_sweep_results
     require(json.loads((directory / "status.json").read_text())["status"] == "complete", "Source sweep is incomplete")
     sweep_config = SweepConfig(**json.loads((directory / "config.json").read_text()))
@@ -84,11 +102,22 @@ def prepare_sources(root, config):
     require(json.loads((directory / "plan.json").read_text()) == plan, "Saved sweep plan changed")
     records = json.loads((directory / "measurements.json").read_text())
     require(len(records) == len(plan) and [record["pattern_id"] for record in records] == [entry["pattern_id"] for entry in plan], "Saved sweep records are incomplete or reordered")
-    entries = [entry for entry in plan if entry["pattern_id"] == config.pattern_id]
-    require(len(entries) == 1 and entries[0]["probability"] > 0, "Recovery requires a saved nonzero sweep pattern")
-    record = next(record for record in records if record["pattern_id"] == config.pattern_id)
-    require(all(record[name] == entries[0][name] for name in entries[0]), "Selected record differs from the sweep plan")
-    require(record == json.loads((directory / "patterns" / f"{config.pattern_id}.json").read_text()), "Individual and aggregate pattern records disagree")
+    references = json.loads((directory / "references.json").read_text())
+    faulty = config.base_kind == "faulty"
+    if faulty:
+        entries = [entry for entry in plan if entry["pattern_id"] == config.pattern_id]
+        require(len(entries) == 1 and entries[0]["probability"] > 0, "Recovery requires a saved nonzero sweep pattern")
+        record = next(record for record in records if record["pattern_id"] == config.pattern_id)
+        require(all(record[name] == entries[0][name] for name in entries[0]), "Selected record differs from the sweep plan")
+        require(record == json.loads((directory / "patterns" / f"{config.pattern_id}.json").read_text()), "Individual and aggregate pattern records disagree")
+    else:
+        # A clean base has no stored cells, so its fault fields are null rather than zero.
+        clustered = config.base_kind == "clustered"
+        require(plan[0]["probability"] == 0 and all(records[0]["measurements"][name] == references[name]["clustered_no_faults"] for name in ("validation", "test")),
+                "Zero-fault sweep record differs from the clustered reference")
+        record = {"pattern_id": None, "seed": None, "probability": 0.0 if clustered else None,
+                  "counts": {"actual_corrupted_cells": 0 if clustered else None, "realized_fault_rate": 0.0 if clustered else None},
+                  "measurements": {name: references[name]["clustered_no_faults" if clustered else "clean"] for name in ("validation", "test")}}
     encoding, clean, metadata, split, _, _, paths, hashes = prepare_audited_sources(root, sweep_config)
     del clean
     metadata = {name: value for name, value in metadata.items() if name != "model_state_dict"}
@@ -99,17 +128,36 @@ def prepare_sources(root, config):
         paths[f"sweep_input_{name}"], hashes[f"sweep_input_{name}"] = path, item["sha256"]
     for relative, digest in json.loads((directory / "source_sha256.json").read_text()).items():
         require(sha256_file(root / relative) == digest, f"Previously used sweep code changed: {relative}")
-    for filename in ("config.json", "plan.json", "status.json", "manifest.json", "measurements.json", "references.json", "source_sha256.json", f"patterns/{config.pattern_id}.json"):
+    for filename in ["config.json", "plan.json", "status.json", "manifest.json", "measurements.json", "references.json", "source_sha256.json"] + ([f"patterns/{config.pattern_id}.json"] if faulty else []):
         path = directory / filename
         paths[f"sweep_{filename}"], hashes[f"sweep_{filename}"] = path, sha256_file(path)
-    paths["selected_pattern"] = root / record["pattern"]
-    hashes["selected_pattern"] = record["pattern_sha256"]
-    require(sha256_file(paths["selected_pattern"]) == hashes["selected_pattern"], "Selected pattern file changed")
-    pattern = torch.load(paths["selected_pattern"], map_location="cpu", weights_only=True)
-    require(pattern["seed"] == record["seed"] and pattern["fault_probability"] == record["probability"], "Selected pattern seed or probability changed")
-    require(summarize_fault_pattern(encoding, pattern) == record["counts"], "Selected pattern counts differ from Step 7")
-    references = json.loads((directory / "references.json").read_text())
+    require(config.clean_checkpoint_sha256 in (None, hashes["clean"]), "Clean checkpoint differs from the configured SHA-256")
+    if faulty:
+        paths["selected_pattern"] = root / record["pattern"]
+        hashes["selected_pattern"] = record["pattern_sha256"]
+        require(sha256_file(paths["selected_pattern"]) == hashes["selected_pattern"], "Selected pattern file changed")
+        pattern = torch.load(paths["selected_pattern"], map_location="cpu", weights_only=True)
+        require(pattern["seed"] == record["seed"] and pattern["fault_probability"] == record["probability"], "Selected pattern seed or probability changed")
+        require(summarize_fault_pattern(encoding, pattern) == record["counts"], "Selected pattern counts differ from Step 7")
     return encoding, metadata, split, record, references, paths, hashes
+
+
+def build_base_state(config, encoding, paths):
+    """Return the independent dense state that stays frozen under the adapters.
+
+    clean: the Step 3 validation-selected checkpoint the encoding was clustered from.
+    clustered: the decoded Step 4 encoding with no faults. faulty: the same encoding
+    read through the saved static pattern, exactly as in Step 8.
+    """
+    if config.base_kind == "clean":
+        state = torch.load(paths["clean"], map_location="cpu", weights_only=True)["model_state_dict"]
+        require(set(state) == set(encoding["clustered_tensors"]) | set(encoding["untouched_state"]), "Clean checkpoint and encoding describe different tensors")
+        require(all(torch.equal(state[name], value) for name, value in encoding["untouched_state"].items()), "Encoding was not clustered from this clean checkpoint")
+        return {name: value.detach().clone() for name, value in state.items()}
+    if config.base_kind == "clustered":
+        return decode_state(encoding)
+    require(config.base_kind == "faulty", "Unsupported base_kind")
+    return apply_fault_pattern(encoding, torch.load(paths["selected_pattern"], map_location="cpu", weights_only=True))
 
 
 def train_adapter_epoch(model, loader, optimizer, device, max_grad_norm):
@@ -147,24 +195,76 @@ def assert_frozen_base(model, original_state):
     require(all(parameter.grad is None for name, parameter in model.named_parameters() if name not in adapter_names), "Base parameter received a gradient")
 
 
-def load_recovered_model(checkpoint_path, project_root, *, device="cpu"):
-    """Reconstruct the exact saved faulty base, then load adapter-only weights."""
-    root = Path(project_root)
-    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+def _restore_adapter(payload, config, root, device):
     require(payload["format_version"] == 1 and payload["kind"] == "static_fault_lora_adapter", "Unsupported recovery checkpoint")
-    config = RecoveryConfig(**payload["config"])
     config.validate()
-    encoding, metadata, _, _, _, paths, hashes = prepare_sources(root, config)
-    require(payload["source_artifacts"] == {name: {"path": str(path.relative_to(root)), "sha256": hashes[name]} for name, path in paths.items()},
-            "Adapter checkpoint source provenance differs")
+    encoding, metadata, split, record, _, paths, hashes = prepare_sources(root, config)
     require(payload["split_sha256"] == metadata["split_sha256"] and payload["encoding_fingerprint"] == encoding_fingerprint(encoding), "Adapter checkpoint storage or split changed")
-    pattern = torch.load(paths["selected_pattern"], map_location="cpu", weights_only=True)
+    require(payload["architecture"] == "resnet18" and payload["classes"] == metadata["classes"] and payload["preprocessing"] == metadata["preprocessing"],
+            "Adapter checkpoint architecture, classes, or preprocessing differ")
+    state = build_base_state(config, encoding, paths)
     model = build_resnet18(metadata["num_classes"], pretrained=False)
-    model.load_state_dict(apply_fault_pattern(encoding, pattern), strict=True)
+    model.load_state_dict(state, strict=True)
     layout = attach_lora(model, config.rank, config.alpha, config.target_names)
     require(layout == payload["adapter_layout"], "Adapter layout differs from saved checkpoint")
     load_adapter_state(model, payload["adapter_state_dict"])
-    return model.to(device).eval(), payload
+    return model.to(device).eval(), {"metadata": metadata, "split": split, "record": record, "paths": paths, "hashes": hashes, "base_state": state}
+
+
+def load_recovered_model(checkpoint_path, project_root, *, device="cpu"):
+    """Reconstruct the exact base the adapter was trained on, then load adapter-only weights."""
+    root = Path(project_root)
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    model, context = _restore_adapter(payload, RecoveryConfig(**payload["config"]), root, device)
+    require(payload["source_artifacts"] == {name: {"path": str(path.relative_to(root)), "sha256": context["hashes"][name]} for name, path in context["paths"].items()},
+            "Adapter checkpoint source provenance differs")
+    return model, payload
+
+
+def load_adapter_on_base(adapter_checkpoint, base_kind, pattern_id, project_root, *, device="cpu"):
+    """Load a saved adapter onto a possibly DIFFERENT base of the same architecture.
+
+    Split, encoding fingerprint, architecture, and the complete adapter layout must
+    match the checkpoint; only base_kind/pattern_id may differ. No training.
+    """
+    payload = torch.load(adapter_checkpoint, map_location="cpu", weights_only=True)
+    config = replace(RecoveryConfig(**payload["config"]), base_kind=base_kind, pattern_id=pattern_id)
+    model, context = _restore_adapter(payload, config, Path(project_root), device)
+    return model, payload, {**context, "config": config}
+
+
+def evaluate_adapter_on_base(adapter_checkpoint, base_kind, pattern_id, project_root, *, device="cpu"):
+    """Measure a saved adapter on another base's validation/test splits; evaluation only.
+
+    The same base is also measured with the adapter output zeroed. Nothing is
+    trained, selected, or written; these numbers must not choose any setting.
+    """
+    root, device = Path(project_root), choose_device(device)
+    model, payload, context = load_adapter_on_base(adapter_checkpoint, base_kind, pattern_id, root, device=device)
+    config, metadata, split, record = context["config"], context["metadata"], context["split"], context["record"]
+    source = RecoveryConfig(**payload["config"])
+    _, eval_transform = cifar10_transforms(metadata["preprocessing"]["input_size"][-1])
+    train_data = CIFAR10(root / config.data_root, train=True, transform=eval_transform, download=False)
+    test_data = CIFAR10(root / config.data_root, train=False, transform=eval_transform, download=False)
+    require(train_data.classes == test_data.classes == metadata["classes"] and len(train_data) == 50000 and len(test_data) == 10000, "CIFAR-10 class order or size changed")
+    datasets = {"validation": Subset(train_data, split["validation"]), "test": Subset(test_data, split["test"]["indices"])}
+    loaders = {name: DataLoader(dataset, batch_size=config.evaluation_batch_size, shuffle=False, num_workers=config.num_workers,
+                                persistent_workers=config.num_workers > 0, pin_memory=device.type == "cuda") for name, dataset in datasets.items()}
+    with_adapter = {name: evaluate_classifier(model, loader, device) for name, loader in loaders.items()}
+    trained = adapter_state_dict(model)
+    load_adapter_state(model, {name: torch.zeros_like(value) if ".lora_B." in name else value for name, value in trained.items()})
+    without_adapter = {name: evaluate_classifier(model, loader, device) for name, loader in loaders.items()}
+    load_adapter_state(model, trained)
+    assert_frozen_base(model, context["base_state"])
+    require(all(sha256_file(path) == context["hashes"][name] for name, path in context["paths"].items()), "Adapter evaluation changed an input artifact")
+    return {"adapter_checkpoint_sha256": sha256_file(adapter_checkpoint), "adapter_epoch": payload["epoch"], "rank": source.rank, "alpha": source.alpha, "adapter_seed": source.seed,
+            "adapter_base": {"base_kind": source.base_kind, "pattern_id": source.pattern_id},
+            "evaluation_base": {"base_kind": base_kind, "pattern_id": pattern_id, "fault_probability": record["probability"],
+                                "actual_corrupted_cells": record["counts"]["actual_corrupted_cells"], "realized_fault_rate": record["counts"]["realized_fault_rate"]},
+            "same_base": (source.base_kind, source.pattern_id) == (base_kind, pattern_id), "device": str(device),
+            "with_adapter": with_adapter, "without_adapter": without_adapter,
+            "accuracy_gain_percentage_points": {name: 100 * (with_adapter[name]["accuracy"] - without_adapter[name]["accuracy"]) for name in loaders},
+            "base_num_correct_difference_from_step7": {name: without_adapter[name]["num_correct"] - record["measurements"][name]["num_correct"] for name in loaders}}
 
 
 def plot_recovery(history, metrics, references, output_dir):
@@ -185,9 +285,10 @@ def plot_recovery(history, metrics, references, output_dir):
             axes[0].set_xticks(epochs)
             axes[0].set_title("Validation selects the checkpoint")
             test_values = [100 * metrics[stage]["test"]["accuracy"] for stage in ("before", "after")]
-            bars = axes[1].bar(["Faulty base", "Faulty base + LoRA"], test_values, width=.55, color=["#a76a2d", "#174c78"])
+            label = BASE_LABELS[metrics["base_kind"]]
+            bars = axes[1].bar([label, f"{label} + LoRA"], test_values, width=.55, color=["#a76a2d", "#174c78"])
             axes[1].bar_label(bars, fmt="%.2f%%", padding=4)
-            axes[1].set_title("Test: same saved pattern before / after")
+            axes[1].set_title("Test: same saved pattern before / after" if metrics["base_kind"] == "faulty" else "Test: same frozen base before / after")
             for axis, split in zip(axes, ("validation", "test")):
                 axis.axhline(100 * references[split]["clean"]["accuracy"], linestyle="--", color="#26734d", label="Original clean reference")
                 axis.axhline(100 * references[split]["clustered_no_faults"]["accuracy"], linestyle=":", color="#a76a2d", label="Clustered zero-fault reference")
@@ -197,8 +298,8 @@ def plot_recovery(history, metrics, references, output_dir):
                 axis.set_axisbelow(True)
                 axis.legend(loc="lower left", fontsize=8)
             config = metrics["config"]
-            fig.suptitle(f"ResNet-18 / CIFAR-10: rank-{config['rank']} LoRA recovery, {metrics['pattern_id']}")
-            fig.text(.5, .02, "One static pattern and one training seed; no uncertainty estimate. Base parameters and BatchNorm buffers fixed.", ha="center", fontsize=8)
+            fig.suptitle(f"ResNet-18 / CIFAR-10: rank-{config['rank']} LoRA recovery, {metrics['pattern_id'] or metrics['base_kind'] + ' base'}")
+            fig.text(.5, .02, f"One {'static pattern' if metrics['base_kind'] == 'faulty' else 'frozen base'} and one training seed; no uncertainty estimate. Base parameters and BatchNorm buffers fixed.", ha="center", fontsize=8)
             fig.tight_layout(rect=(0, .055, 1, .94))
             paths = [Path(output_dir) / f"lora_recovery.{extension}" for extension in ("png", "pdf")]
             for path in paths:
@@ -242,14 +343,14 @@ def run_recovery(config, project_root):
         write_json(results_dir / "source_sha256.json", source_code)
         write_json(results_dir / "splits.json", split)
         write_json(results_dir / "preprocessing.json", metadata["preprocessing"])
-        write_json(results_dir / "fault_counts.json", record["counts"])
+        if config.base_kind == "faulty":
+            write_json(results_dir / "fault_counts.json", record["counts"])
         environment = {"python": platform.python_version(), "platform": platform.platform(), "device": str(device), "cpu_threads": config.cpu_threads,
                        "packages": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "numpy", "matplotlib")},
                        "reproducibility": "Seeded adapter initialization, data shuffle, workers and augmentation; bitwise replay across hardware/library versions is not guaranteed."}
         write_json(results_dir / "environment.json", environment)
         sources = {name: {"path": str(path.relative_to(root)), "sha256": source_hashes[name]} for name, path in source_paths.items()}
-        pattern = torch.load(source_paths["selected_pattern"], map_location="cpu", weights_only=True)
-        original_state = apply_fault_pattern(encoding, pattern)
+        original_state = build_base_state(config, encoding, source_paths)
         model = build_resnet18(metadata["num_classes"], pretrained=False)
         model.load_state_dict(original_state, strict=True)
         base_parameters = sum(parameter.numel() for parameter in model.parameters())
@@ -277,9 +378,9 @@ def run_recovery(config, project_root):
         validation_loader = DataLoader(Subset(evaluation_data, split["validation"]), batch_size=config.evaluation_batch_size, shuffle=False,
                                        generator=torch.Generator().manual_seed((config.seed + 1) % 2**32), **options)
         before = {"validation": evaluate_classifier(model, validation_loader, device)}
-        require(before["validation"]["num_correct"] == record["measurements"]["validation"]["num_correct"], "Initial validation accuracy differs from the selected Step 7 pattern")
+        require(before["validation"]["num_correct"] == record["measurements"]["validation"]["num_correct"], "Initial validation accuracy differs from the Step 7 measurement of this base")
         write_json(results_dir / "before.json", before)
-        checkpoint_metadata = {"format_version": 1, "kind": "static_fault_lora_adapter", "config": asdict(config), "adapter_layout": layout,
+        checkpoint_metadata = {"format_version": 1, "kind": "static_fault_lora_adapter", "base_kind": config.base_kind, "config": asdict(config), "adapter_layout": layout,
                                "source_artifacts": sources, "encoding_fingerprint": encoding_fingerprint(encoding), "split_sha256": metadata["split_sha256"],
                                "architecture": "resnet18", "dataset": "CIFAR-10", "classes": metadata["classes"], "preprocessing": metadata["preprocessing"]}
         def save_adapter(filename, epoch, validation):
@@ -330,12 +431,12 @@ def run_recovery(config, project_root):
         assert_frozen_base(model, original_state)
         load_adapter_state(model, initial_adapters)
         before["test"] = evaluate_classifier(model, test_loader, device)
-        require(before["test"]["num_correct"] == record["measurements"]["test"]["num_correct"], "Paired test baseline differs from the selected Step 7 pattern")
+        require(before["test"]["num_correct"] == record["measurements"]["test"]["num_correct"], "Paired test baseline differs from the Step 7 measurement of this base")
         load_adapter_state(model, selected_state["adapter_state_dict"])
         assert_frozen_base(model, original_state)
         require(all(sha256_file(path) == source_hashes[name] for name, path in source_paths.items()), "Recovery changed an input artifact")
         require(all(sha256_file(root / relative) == digest for relative, digest in source_code.items()), "Recovery source code changed during the run")
-        metrics = {"run_id": config.run_id, "config": asdict(config), "pattern_id": config.pattern_id, "fault_seed": record["seed"], "fault_probability": record["probability"],
+        metrics = {"run_id": config.run_id, "config": asdict(config), "base_kind": config.base_kind, "pattern_id": config.pattern_id, "fault_seed": record["seed"], "fault_probability": record["probability"],
                    "actual_corrupted_cells": record["counts"]["actual_corrupted_cells"], "realized_fault_rate": record["counts"]["realized_fault_rate"], "selected_epoch": best_epoch,
                    "before": before, "after": after,
                    "recovery": {name: {"accuracy_gain_percentage_points": 100 * (after[name]["accuracy"] - before[name]["accuracy"]),
@@ -350,11 +451,13 @@ def run_recovery(config, project_root):
         write_json(results_dir / "metrics.json", metrics)
         figures = plot_recovery(history, metrics, references, results_dir)
         manifest = {**checkpoint_metadata, "environment": environment, "selection_rule": "Highest validation accuracy, then lowest validation loss; exact ties retain earlier epoch. Includes epoch-zero adapters.",
-                    "pattern_selection": "Configured saved pattern; initial default is first ordinal at p=0.01, not selected by its score.",
-                    "test_policy": "Same fixed pattern before/after; each model evaluated once on official test after validation-only checkpoint selection.",
+                    "base_selection": {"clean": "Step 3 validation-selected clean checkpoint; no clustering or faults.", "clustered": "Decoded Step 4 encoding with zero faults.",
+                                       "faulty": "Step 4 encoding read through the configured saved static pattern."}[config.base_kind],
+                    "pattern_selection": "Configured saved pattern; initial default is first ordinal at p=0.01, not selected by its score." if config.base_kind == "faulty" else "No fault pattern; pattern_id is null.",
+                    "test_policy": "Same fixed base before/after; each model evaluated once on official test after validation-only checkpoint selection.",
                     "frozen_state": "All base weights, biases, BatchNorm affine parameters, running statistics and counters unchanged. Model stays in eval mode with adapter gradients enabled.",
                     "adapter_storage": "Reliable float32 adapter storage, unmerged residual branches; no adapter faults injected; byte estimate excludes optimizer and archive overhead.",
-                    "limitations": "One pattern and one adapter training seed; no unseen-pattern transfer, rank study, clustering recovery control, or hardware speed/storage-area measurement.",
+                    "limitations": "One base and one adapter training seed per run; this run alone measures no unseen-pattern transfer, rank effect, or hardware speed/storage-area.",
                     "source_artifacts_preserved": True, "base_state_preserved_each_epoch": True, "zero_output_identity_verified": True, "adapter_reload_logits_exact": True,
                     "split_sizes": {"train": len(split["train"]), "validation": len(split["validation"]), "test": len(split["test"]["indices"])},
                     "plots": [{"path": str(path.relative_to(root)), "sha256": sha256_file(path)} for path in figures], "elapsed_seconds": time.monotonic() - started}
