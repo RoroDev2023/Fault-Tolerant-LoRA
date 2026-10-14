@@ -32,7 +32,10 @@ both test sets. Step 10c ran two harsher conditions. With faults in the Linear
 weights at 20–100%, the mean drop reached about 18 points at 100%. With the
 embeddings also clustered and faulted, at 0–50%, it reached about 18–20 points
 at 50%. Step 10c also fixed the Part 7 fault rates with a rule that uses only
-the selection split. LoRA recovery on TinyBERT remains future work.
+the selection split. Step 10d added the TinyBERT LoRA recovery code and ran one
+CPU pilot on a 20% Condition B pattern. Test accuracy rose from 80.73% to 86.58%
+(`sst2-validation-872`) and from 80.33% to 87.91% (`sst2-original-test-1820`).
+The full Part 7 matrix is proposed, not run.
 
 ## Completed workflow
 
@@ -48,6 +51,7 @@ the selection split. LoRA recovery on TinyBERT remains future work.
 10. [TinyBERT / SST-2 clean baseline (10a)](#step-10a-tinybert--sst-2-clean-baseline)
 11. [TinyBERT clustering and fault sweep (10b)](#step-10b-tinybert-clustering-and-fault-sweep)
 12. [Harsher TinyBERT fault conditions (10c)](#step-10c-harsher-tinybert-fault-conditions)
+13. [TinyBERT LoRA recovery code and pilot (10d)](#step-10d-tinybert-lora-recovery-code-and-pilot)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -1717,6 +1721,185 @@ The full offline suite passes **87 tests** (80 existing, 7 new, in
 - The fault model remains the uniform adjacent-level simplification. LayerNorm,
   biases, codebooks, mappings, and future adapters are treated as reliable.
 
+## Step 10d: TinyBERT LoRA recovery code and pilot
+
+**Purpose:** prepare Part 7 with recovery code that works on all three
+TinyBERT base kinds, then run **one pilot** to check the declared recipe and
+measure its cost. The full matrix below is a proposal and was not run.
+
+### Recipe (declared before the pilot; not tuned)
+
+- **Adapters:** rank 4, alpha 4 (scale 1), on all 26 `nn.Linear` layers. A
+  starts Kaiming-uniform and B starts at zero, so the initial output is zero.
+  There is no adapter dropout.
+- **Frozen base:** all weights, biases, embeddings, and LayerNorm parameters.
+  The model stays in `eval()` mode, which also disables BERT's dropout;
+  gradients flow only into A and B.
+- **Training:** AdamW with learning rate 0.001 and weight decay 0.0001,
+  gradient-norm clipping at 1.0, batch size 32, and 2 epochs over the 62,349
+  LoRA-training sentences (1,949 steps per epoch), shuffled with the training
+  seed. The cosine schedule anneals **per optimizer step** over all 3,898 steps
+  to zero. The recipe did not say per step or per epoch; this granularity is
+  fixed in the configuration (`schedule: cosine-per-step`). The ResNet runner
+  stepped its cosine once per epoch.
+- **Selection:** the selection split is evaluated every half epoch. The epoch-0
+  zero-output adapter competes. The highest selection accuracy wins, then the
+  lowest selection cross-entropy; exact ties keep the earlier point. Both test
+  sets are evaluated only after selection, each separately.
+
+**One deviation forced by the existing code.** The classifier is a 312 → 2
+Linear layer. The existing `attach_lora` rejects a rank above either matrix
+dimension, so rank 4 cannot be attached there. The new
+`models/tinybert_lora.py` keeps `models/lora.py` unchanged; its
+`attach_linear_lora` does the following:
+
+- uses the original `LoRALayer` on the 25 layers where rank 4 fits, with the
+  same seeded initialization order as `attach_lora`;
+- on the classifier only, uses `CappedRankLoRALayer`, a subclass that skips
+  that one check. It keeps the declared factors (A 4×312, B 2×4), but **their
+  product has rank at most 2**. The adapter layout records
+  `effective_rank_bound: 2` for that layer.
+
+### Code
+
+| File | Role |
+| --- | --- |
+| `models/tinybert_lora.py` | `attach_linear_lora` and `CappedRankLoRALayer`. As subclasses of `LoRALayer`, the existing `adapter_state_dict`, `load_adapter_state`, and `base_state_dict` apply unchanged. |
+| `training/tinybert_recovery.py` | `TinyBertRecoveryConfig`, `run_tinybert_recovery`, `load_tinybert_recovered_model`, `evaluate_tinybert_adapter_on_base` (transfer, evaluation only), and `verify_tinybert_recovery`. |
+| `training/tinybert_recovery_matrix.py` | Declared matrix: independent runs with derived IDs, then saved transfer evaluations; refuses existing directories and stops at the first failure. |
+
+Supported bases mirror the ResNet runner:
+
+- `clean`: the Step 10a checkpoint;
+- `clustered`: the Linear-only encoding (`condition: linear-only`) or the Linear
+  + embeddings encoding (`linear-and-embeddings`);
+- `faulty`: a condition plus a saved pattern from the Step 10b sweep or a Step
+  10c sweep.
+
+Each run re-verifies the full source chain: Step 10a, the clean evaluation,
+clustering, the audit, and the sweep, including recorded input and code
+hashes. It then checks:
+
+- the before-LoRA selection result equals the sweep's record for that base;
+- the zero-output identity on a fixed synthetic token batch;
+- the frozen base, the adapter-only trainable set, no base gradients, and
+  eval mode, at every evaluation point;
+- an independent reload of the selected adapter, with exactly equal logits;
+- the paired before/after test results, with "before" equal to the sweep's
+  record.
+
+Run IDs are `tinybert-sst2-lora-{base}-{none|lin|linemb}-{pattern|none}-r{rank}-train{seed}`.
+
+### Pilot: Condition B, 20% pattern `rate07-seed1030`, training seed 42, CPU
+
+Run `tinybert-sst2-lora-faulty-linemb-rate07-seed1030-r4-train42` used the first
+declared 20% Condition B pattern: 2,870,659 of 14,333,904 Linear + embedding
+cells corrupted (20.03%). It has **92,072 trainable adapter parameters**, 0.64%
+of the 14,350,874 frozen base parameters; the selected adapter file is 401,369
+bytes.
+
+| Point | Selection accuracy | Training loss (half-epoch mean) |
+| --- | ---: | ---: |
+| 0 (zero-output adapter) | 87.14% | — |
+| 0.5 | 93.30% | 0.1775 |
+| 1.0 | 94.18% | 0.1463 |
+| 1.5 | 94.16% | 0.1268 |
+| **2.0 (selected)** | **94.26%** | 0.1231 |
+
+**Training loss stayed finite and decreased.** The half-epoch means fell at
+every point. The 100-step windows were noisy but trended down from 0.242 to
+0.112, with a minimum of 0.108. Learning rate 0.001 did not diverge. The
+selection-only values above choose the checkpoint; they are not held-out
+results.
+
+Both test sets were evaluated once each, after selection, against the same
+faulty base with the zero-output adapter:
+
+| Test set | Faulty base, before | Selected LoRA, after | Gain | Condition B clustered reference | Clean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `sst2-validation-872` | 80.73% (704) | **86.58%** (755) | +5.85 pp | 86.24% | 88.76% |
+| `sst2-original-test-1820` | 80.33% (1,462) | **87.91%** (1,600) | +7.58 pp | 87.97% | 88.35% |
+
+Cross-entropy fell from 0.6832 to 0.3784 and from 0.6876 to 0.3272. After LoRA,
+both test sets are within a few sentences of the Condition B clustered
+reference: 3 above it on `sst2-validation-872`, 1 below on
+`sst2-original-test-1820`. As in Step 8, **this gain mixes fault repair,
+clustering repair, and additional task training on 62,349 labelled sentences.**
+The controls proposed below are needed to separate them. This is one pattern
+and one training seed.
+
+**Time on CPU (4 threads):** epoch 1 took 242.1 s and epoch 2 246.5 s of wall
+clock, including two selection evaluations each; training alone took 224.1 s
+and 230.2 s. The whole run took 522.5 s after source verification and about
+533 s from start to completion. The ResNet runs held the GPU, so MPS was not
+used or measured.
+
+### Proposed Part 7 matrix (not run)
+
+`configs/tinybert_sst2_lora_matrix_part7_proposed.json` declares the following
+for `scripts/run_tinybert_recovery_matrix.py`. It uses the recipe above with
+`device: mps`. The faulty rates are the ones Step 10c's selection-only rule
+chose. Each rate uses its first three declared patterns:
+
+- **Linear only, from the Condition A sweep:**
+  - 30%: `rate08-seed77/78/79`
+  - 50%: `rate09-seed82/83/84`
+  - 75%: `rate10-seed87/88/89`
+  - 100%: `rate11-seed92/93/94`
+- **Linear + embeddings, from the Condition B sweep:**
+  - 10%: `rate06-seed1025/1026/1027`
+  - 20%: `rate07-seed1030/1031/1032`
+  - 50%: `rate08-seed1035/1036/1037`
+
+| Group | Runs |
+| --- | ---: |
+| Clean controls, seeds 42/43/44 | 3 |
+| Clustered Linear-only controls, seeds 42/43/44 | 3 |
+| Clustered Linear + embeddings controls, seeds 42/43/44 | 3 |
+| Faulty Linear only: 4 rates × 3 patterns × seeds 42/43 | 24 |
+| Faulty Linear + embeddings: 3 rates × 3 patterns × seeds 42/43 | 18 |
+| **Total cells** | **51** |
+| Already run: this pilot is one of the faulty Linear + embeddings cells | −1 |
+| **Training runs in the configuration** | **50** |
+| Transfer evaluations: each clustered-control adapter (3 per condition) on the same 21 faulty patterns of its condition, 4×3×3 + 3×3×3 | **63** |
+
+The pilot is excluded from the configuration because its run directory exists
+and runs are never re-run in place; its saved results stand in for that cell.
+A transfer evaluation loads a clustered-trained adapter onto a faulty base of
+the same encoding. It measures the selection split and both test sets with the
+adapter and with its output zeroed, and trains nothing. The zero-output result
+must reproduce the sweep's record.
+
+**Time estimate.**
+
+| Device | Training runs (50) | Transfer evaluations (63) | Total |
+| --- | ---: | ---: | ---: |
+| CPU, 4 threads, measured per run | 50 × ~533 s ≈ **7.4 h** | ~45 s each ≈ **0.8 h** | **≈ 8.2 h** |
+| MPS, **not measured** | ≈ 1.5–3.7 h if 2–5× faster than CPU | ≈ 0.2–0.4 h | **≈ 2–4 h (assumption)** |
+
+The CPU figure is the pilot's measured time per run. The pilot's selection
+evaluations imply about 9 s per 5,000 sentences, which gives the per-transfer
+cost estimate. The MPS row assumes a 2–5× speedup, which has not been measured
+for this model, batch size, or sequence lengths. Small batches of short
+sequences may gain little on a GPU. One timed MPS run, once the ResNet runs
+release the GPU, should replace this assumption before scheduling.
+
+### Tests
+
+The full offline suite passes **90 tests** (87 existing, 3 new, in
+`tests/test_tinybert_recovery.py`). The new tests check:
+
+- the existing `attach_lora` rejects rank 4 on the 2-output classifier, while
+  `attach_linear_lora` covers every Linear layer, caps only the classifier,
+  and matches `attach_lora`'s seeded initialization on the other layers;
+- zero-output identity, gradients only in adapters, deterministic eval-mode
+  forwards, and `assert_frozen_base` failing if the model leaves eval mode;
+- configuration rules and run IDs;
+- a complete offline pipeline: faulty, clean, and clustered recovery runs with
+  passing verification, half-epoch points, reload, and refusal to overwrite; a
+  clustered→faulty transfer reproducing the sweep record; rejection of a
+  mismatched condition; and a two-run matrix with one transfer.
+
 ## Next steps: 9–10 (not implemented)
 
 9. **Controlled comparisons:** compare original, clustered, faulty, and adapted
@@ -1725,9 +1908,9 @@ The full offline suite passes **87 tests** (80 existing, 7 new, in
    patterns, vary rank and placement, and record parameter, storage, and computation overhead.
 10. **Language-model extension:** Steps 10a–10b established the TinyBERT /
     SST-2 clean, clustered, and faulty baselines through sibling modules, and
-    Step 10c added two harsher conditions. Remaining: the Part 7 LoRA recovery
-    runs [proposed in Step 10c](#proposed-part-7-lora-conditions-not-run),
-    with selection on the saved selection split.
+    Step 10c added two harsher conditions. Step 10d added the recovery code,
+    one pilot, and the [proposed Part 7 matrix](#proposed-part-7-matrix-not-run).
+    Remaining: run that matrix and its transfer evaluations.
 
 Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,
