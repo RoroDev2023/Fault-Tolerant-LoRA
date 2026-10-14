@@ -4,6 +4,7 @@ import argparse
 import csv
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import gc
 import importlib.metadata
 import json
 from pathlib import Path
@@ -107,6 +108,40 @@ def write_summary(results_dir, rows):
     temporary.replace(results_dir / "summary.csv")
 
 
+def verify_run(root, config, run, row, *, check_source_code=True):
+    """Re-read one finished run of a matrix; return its number of verified input artifacts."""
+    root = Path(root)
+    expected = run_config(config, run)
+    directory = root / config.results_root / expected.run_id
+    status = json.loads((directory / "status.json").read_text())
+    require(status["status"] == "complete" and status["completed_epochs"] == config.epochs, f"Run is incomplete: {expected.run_id}")
+    require(json.loads((directory / "config.json").read_text()) == asdict(expected), f"Saved run configuration differs from the matrix: {expected.run_id}")
+    metrics = json.loads((directory / "metrics.json").read_text())
+    require(metrics["config"] == asdict(expected) and summary_row(metrics) == row, f"Summary row differs from saved metrics: {expected.run_id}")
+    require(metrics["before"] == json.loads((directory / "before.json").read_text()), f"Saved before-LoRA metrics disagree: {expected.run_id}")
+    history = json.loads((directory / "history.json").read_text())
+    require([item["epoch"] for item in history] == list(range(1, config.epochs + 1)) and all(item["frozen_base_verified"] for item in history), f"Epoch history is incomplete: {expected.run_id}")
+    # Recompute selection from validation records only; strict improvement keeps the earlier epoch.
+    selected, best_key = 0, (metrics["before"]["validation"]["accuracy"], -metrics["before"]["validation"]["cross_entropy_loss"])
+    for item in history:
+        key = (item["validation"]["accuracy"], -item["validation"]["cross_entropy_loss"])
+        if key > best_key:
+            selected, best_key = item["epoch"], key
+    require(selected == metrics["selected_epoch"] == status["selected_epoch"], f"Selected epoch is not the validation optimum: {expected.run_id}")
+    best = root / metrics["best_checkpoint"]
+    require(sha256_file(best) == metrics["best_checkpoint_sha256"], f"Selected adapter checkpoint changed: {expected.run_id}")
+    payload = torch.load(best, map_location="cpu", weights_only=True)
+    require(payload["epoch"] == selected and payload["validation_metrics"] == metrics["after"]["validation"] and payload["config"] == asdict(expected),
+            f"Selected adapter checkpoint differs from metrics: {expected.run_id}")
+    manifest = json.loads((directory / "manifest.json").read_text())
+    for name, item in manifest["source_artifacts"].items():
+        require(sha256_file(root / item["path"]) == item["sha256"], f"Input artifact changed after {expected.run_id}: {name}")
+    if check_source_code:
+        for relative, digest in json.loads((directory / "source_sha256.json").read_text()).items():
+            require(sha256_file(root / relative) == digest, f"Source code changed after {expected.run_id}: {relative}")
+    return len(manifest["source_artifacts"])
+
+
 def verify_matrix(root, config):
     """Re-read every saved run and the summary; fail on any inconsistency."""
     root = Path(root)
@@ -117,36 +152,7 @@ def verify_matrix(root, config):
     require([row["run_id"] for row in rows] == [entry["run_id"] for entry in plan], "Summary is incomplete, duplicated, or reordered")
     with (results_dir / "summary.csv").open(newline="") as stream:
         require(list(csv.DictReader(stream)) == [csv_row(row) for row in rows], "CSV and JSON summaries disagree")
-    source_artifacts = 0
-    for run, row in zip(config.runs, rows):
-        expected = run_config(config, run)
-        directory = root / config.results_root / expected.run_id
-        status = json.loads((directory / "status.json").read_text())
-        require(status["status"] == "complete" and status["completed_epochs"] == config.epochs, f"Run is incomplete: {expected.run_id}")
-        require(json.loads((directory / "config.json").read_text()) == asdict(expected), f"Saved run configuration differs from the matrix: {expected.run_id}")
-        metrics = json.loads((directory / "metrics.json").read_text())
-        require(metrics["config"] == asdict(expected) and summary_row(metrics) == row, f"Summary row differs from saved metrics: {expected.run_id}")
-        require(metrics["before"] == json.loads((directory / "before.json").read_text()), f"Saved before-LoRA metrics disagree: {expected.run_id}")
-        history = json.loads((directory / "history.json").read_text())
-        require([item["epoch"] for item in history] == list(range(1, config.epochs + 1)) and all(item["frozen_base_verified"] for item in history), f"Epoch history is incomplete: {expected.run_id}")
-        # Recompute selection from validation records only; strict improvement keeps the earlier epoch.
-        selected, best_key = 0, (metrics["before"]["validation"]["accuracy"], -metrics["before"]["validation"]["cross_entropy_loss"])
-        for item in history:
-            key = (item["validation"]["accuracy"], -item["validation"]["cross_entropy_loss"])
-            if key > best_key:
-                selected, best_key = item["epoch"], key
-        require(selected == metrics["selected_epoch"] == status["selected_epoch"], f"Selected epoch is not the validation optimum: {expected.run_id}")
-        best = root / metrics["best_checkpoint"]
-        require(sha256_file(best) == metrics["best_checkpoint_sha256"], f"Selected adapter checkpoint changed: {expected.run_id}")
-        payload = torch.load(best, map_location="cpu", weights_only=True)
-        require(payload["epoch"] == selected and payload["validation_metrics"] == metrics["after"]["validation"] and payload["config"] == asdict(expected),
-                f"Selected adapter checkpoint differs from metrics: {expected.run_id}")
-        manifest = json.loads((directory / "manifest.json").read_text())
-        for name, item in manifest["source_artifacts"].items():
-            require(sha256_file(root / item["path"]) == item["sha256"], f"Input artifact changed after {expected.run_id}: {name}")
-        source_artifacts += len(manifest["source_artifacts"])
-        for relative, digest in json.loads((directory / "source_sha256.json").read_text()).items():
-            require(sha256_file(root / relative) == digest, f"Source code changed after {expected.run_id}: {relative}")
+    source_artifacts = sum(verify_run(root, config, run, row) for run, row in zip(config.runs, rows))
     for relative, digest in json.loads((results_dir / "source_sha256.json").read_text()).items():
         require(sha256_file(root / relative) == digest, f"Source code changed during the matrix: {relative}")
     return {"status": "passed", "runs_verified": len(rows), "plan_and_summary_order_verified": True, "csv_matches_json": True, "run_configurations_match_matrix": True,
@@ -184,6 +190,10 @@ def run_matrix(config, project_root):
             current = entry["run_id"]
             print(json.dumps({"event": "matrix_run_start", **entry, "completed_runs": len(rows), "planned_runs": len(plan)}), flush=True)
             rows.append(summary_row(recovery.run_recovery(run_config(config, run), root)))
+            # Runs share one process; release the finished run's model and device cache.
+            gc.collect()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
             write_summary(results_dir, rows)
             write_json(results_dir / "status.json", {"status": "running", "completed_runs": len(rows), "planned_runs": len(plan)})
             print(json.dumps({"event": "matrix_run_complete", **rows[-1], "completed_runs": len(rows), "planned_runs": len(plan)}), flush=True)

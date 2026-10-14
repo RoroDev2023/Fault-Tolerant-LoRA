@@ -1,0 +1,52 @@
+{
+  "run_id": "resnet18-cifar10-lora-controls",
+  "source_matrices": [
+    {
+      "results": "results/resnet18-cifar10-lora-controls-matrix",
+      "status": "interrupted",
+      "completed_runs": 4
+    },
+    {
+      "results": "results/resnet18-cifar10-lora-controls-b",
+      "status": "complete"
+    },
+    {
+      "results": "results/resnet18-cifar10-lora-faulty-p001",
+      "status": "complete"
+    },
+    {
+      "results": "results/resnet18-cifar10-lora-faulty-p005",
+      "status": "complete"
+    },
+    {
+      "results": "results/resnet18-cifar10-lora-faulty-p010",
+      "status": "complete"
+    }
+  ],
+  "source_bn_results": "results/resnet18-cifar10-bn-recalibration-seed42",
+  "source_sweep_results": "results/resnet18-cifar10-fault-sweep-seed42",
+  "fault_probabilities": [
+    0.01,
+    0.05,
+    0.1
+  ],
+  "control_seeds": [
+    42,
+    43,
+    44
+  ],
+  "faulty_seeds": [
+    42,
+    43
+  ],
+  "rank": 4,
+  "alpha": 4.0,
+  "results_root": "results",
+  "sources_allowed_to_differ": [
+    "src/fault_lora/evaluation/lora_controls.py",
+    "src/fault_lora/training/recovery_matrix.py"
+  ],
+  "step8_results": "results/resnet18-cifar10-lora-r4-p001-seed52-train42",
+  "step8_rerun_id": "resnet18-cifar10-lora-faulty-rate03-seed52-r4-train42",
+  "step8_tolerance_percentage_points": 0.3
+}

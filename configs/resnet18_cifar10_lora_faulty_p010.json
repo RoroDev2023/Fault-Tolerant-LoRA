@@ -1,0 +1,32 @@
+{
+  "matrix_id": "resnet18-cifar10-lora-faulty-p010",
+  "run_id_prefix": "resnet18-cifar10-lora",
+  "source_sweep_results": "results/resnet18-cifar10-fault-sweep-seed42",
+  "source_audit_results": "results/resnet18-cifar10-fault-checks-seed42",
+  "clean_checkpoint_sha256": "7a9d200cbce14c01ddadb68c3a94ce8a9a7990a4cfcdfb7d9f5ae4bdfac47439",
+  "target_names": null,
+  "epochs": 5,
+  "batch_size": 128,
+  "evaluation_batch_size": 256,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "max_grad_norm": 1.0,
+  "device": "mps",
+  "cpu_threads": 4,
+  "num_workers": 2,
+  "data_root": "data",
+  "results_root": "results",
+  "checkpoint_root": "checkpoints",
+  "runs": [
+    {"base_kind": "faulty", "pattern_id": "rate06-seed67", "rank": 4, "alpha": 4.0, "seed": 42},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed67", "rank": 4, "alpha": 4.0, "seed": 43},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed68", "rank": 4, "alpha": 4.0, "seed": 42},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed68", "rank": 4, "alpha": 4.0, "seed": 43},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed69", "rank": 4, "alpha": 4.0, "seed": 42},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed69", "rank": 4, "alpha": 4.0, "seed": 43},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed70", "rank": 4, "alpha": 4.0, "seed": 42},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed70", "rank": 4, "alpha": 4.0, "seed": 43},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed71", "rank": 4, "alpha": 4.0, "seed": 42},
+    {"base_kind": "faulty", "pattern_id": "rate06-seed71", "rank": 4, "alpha": 4.0, "seed": 43}
+  ]
+}
