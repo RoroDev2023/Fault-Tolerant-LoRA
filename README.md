@@ -14,7 +14,7 @@ evaluated on CIFAR-10, and their configurations, splits, preprocessing,
 checkpoints/encodings, provenance, and measured results are saved locally. The
 original clean checkpoint is preserved. A simplified adjacent-level simulator
 has saved one static 1%-probability fault pattern and its reconstructed faulty
-checkpoint. All eight full-model Step 6 audit checks and 51 unit tests pass.
+checkpoint. All eight full-model Step 6 audit checks and 60 unit tests pass.
 Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
 Step 8 trained rank-4 LoRA adapters for five epochs on one saved 1% pattern,
@@ -22,8 +22,12 @@ with all base parameters and normalization buffers frozen. Its paired test
 accuracy changed from 79.91% to 91.76%.
 Step 9a generalized that recovery code to clean, clustered, and faulty bases,
 added a batch runner and an evaluation-only adapter-transfer utility, and ran
-no new training. Controlled comparisons and the language-model extension remain
-future work.
+no new training. Step 9b trained the same LoRA recipe on clean and clustered
+bases and on all 15 saved 1%, 5%, and 10% patterns (36 runs), and added a
+no-training BatchNorm-recalibration baseline. LoRA reached 92.13–92.44% mean test
+accuracy on every clustered or faulty base, within 0.31 pp of LoRA on the
+zero-fault clustered base. Transfer to unseen patterns, rank/placement studies,
+and the language-model extension remain future work.
 
 ## Completed workflow
 
@@ -36,6 +40,7 @@ future work.
 7. [Fault-rate experiments](#step-7-fault-rate-experiments)
 8. [LoRA recovery](#step-8-lora-recovery)
 9. [Generalized recovery runner (9a)](#step-9a-generalized-recovery-runner)
+10. [LoRA control matrix and BatchNorm recalibration (9b)](#step-9b-lora-control-matrix-and-batchnorm-recalibration)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -55,12 +60,12 @@ added only in the later steps documented below.
 | `src/fault_lora/models/` | ResNet-18 loading and checkpoint restoration; convolutional and linear LoRA adapters. |
 | `src/fault_lora/data/` | Dataset preparation, preprocessing, and split handling. |
 | `src/fault_lora/memory/` | Scalar clustering, codebooks, typed indices, reversible physical mappings, and static adjacent-level patterns; future shared component integration. |
-| `src/fault_lora/evaluation/` | Classification metrics, artifact audits, controlled comparisons, and fault-rate plots. |
+| `src/fault_lora/evaluation/` | Classification metrics, artifact audits, fault-rate plots, BatchNorm recalibration, and the LoRA control analysis. |
 | `src/fault_lora/training/` | Clean CIFAR-10 fine-tuning, adapter-only recovery training on any base, the recovery matrix runner, and adapter-transfer evaluation. |
 | `configs/` | Baseline, fault-generation, audit, sweep, and LoRA recovery configurations. |
-| `scripts/` | Environment checks, baselines, fault generation/audits, sweeps, LoRA recovery, and the recovery matrix. |
+| `scripts/` | Environment checks, baselines, fault generation/audits, sweeps, LoRA recovery, the recovery matrix, BatchNorm recalibration, and the control analysis. |
 | `tests/` | Offline baseline, representation, and integrity checks. |
-| `docs/figures/` | Repository copies of verified Step 7 and Step 8 PNG/PDF figures embedded in this README. |
+| `docs/figures/` | Repository copies of verified Step 7, 8, and 9b PNG/PDF figures embedded in this README. |
 | `results/` | Generated measurements and plots; ignored by Git. |
 | `checkpoints/` | Pretrained weights, clean/decoded checkpoints, clustered encodings, sparse patterns, and adapter-only checkpoints; ignored by Git. |
 | `data/` | Downloaded CIFAR-10 files; ignored by Git. |
@@ -979,8 +984,8 @@ own base and runs on other bases.
 
 ### Limitations
 
-- No recovery run exists yet for a clean or clustered ResNet-18 base; the
-  attribution question from Step 8 is still open.
+- At the time of Step 9a no recovery run existed for a clean or clustered base;
+  Step 9b ran them.
 - The before-LoRA check requires the exact Step 7 correct-prediction count, so a
   run on a device that reproduces different counts fails instead of proceeding.
 - An interrupted matrix is not resumed. Its finished runs keep their
@@ -990,12 +995,220 @@ own base and runs on other bases.
 - Step 3–7 source files were not modified. `training/recovery.py` was, so its
   hash differs from the one recorded by the Step 8 run.
 
+## Step 9b: LoRA control matrix and BatchNorm recalibration
+
+**Purpose:** find out what Step 8's LoRA gain actually repairs. Is it
+clustering loss, fault loss, or simply extra training? And how much of it would
+a no-training fix of the BatchNorm statistics already recover?
+
+![Test accuracy versus actual fault rate: Step 7 faulty means, faulty plus BatchNorm recalibration, faulty plus LoRA, with clean, clustered, LoRA-on-clean, and LoRA-on-clustered references; right panel zooms on the LoRA results.](docs/figures/resnet18-cifar10-step9b-lora-controls.png)
+
+[Download the PDF figure](docs/figures/resnet18-cifar10-step9b-lora-controls.pdf).
+The left panel shows the full test-accuracy range; the right panel zooms in on
+the LoRA results. Orange is Step 7 with no repair, green is BatchNorm
+recalibration, and blue is LoRA; bars are ±1 sample SD. Small blue dots are
+individual LoRA runs.
+
+### Answer in brief
+
+- **LoRA brings every damaged base to about the same accuracy.** Mean test
+  accuracy after LoRA was 92.44% on the zero-fault clustered base and 92.31%,
+  92.27%, and 92.13% at 1%, 5%, and 10% faults. Before LoRA, the same bases
+  ranged from 49.09% to 85.35%.
+- **LoRA(faulty) ≈ LoRA(clustered), with a small deficit that grows with
+  rate.** The fault-specific gap was −0.13 ± 0.22 pp at 1%, −0.17 ± 0.30 pp at
+  5%, and −0.31 ± 0.11 pp at 10%. At 10%, all ten runs fell below the
+  LoRA(clustered) mean, by 0.06 to 0.46 pp.
+- **Extra training alone is worth about half a point.** LoRA on the
+  undamaged clean model gave +0.47 ± 0.11 pp (92.75%).
+- **BatchNorm statistics account for most of the damage.** Recalibration
+  alone, with no training and no labels, raised clustered accuracy from
+  83.29% to 89.86% and the worst 10% pattern from 49.09% to 86.75%. LoRA's
+  advantage over recalibration was +2.58 pp on the clustered base and +2.89,
+  +3.18, and +4.70 pp at 1%, 5%, and 10%.
+
+### Method
+
+**LoRA runs.** The Step 8 recipe was reused unchanged: rank 4, alpha 4, all 21
+Conv2d/Linear layers, five epochs, batch size 128, AdamW learning rate 0.001,
+weight decay 0.0001, cosine schedule, gradient clipping 1.0, and MPS. Base state
+was frozen and checked for exact equality every epoch. Checkpoints were
+selected on validation only, with the epoch-0 zero-output adapter competing.
+All 36 runs were declared in one configuration before any of them started:
+
+| Base | Patterns | Training seeds | Runs |
+| --- | --- | --- | ---: |
+| Clean (Step 3 checkpoint) | — | 42, 43, 44 | 3 |
+| Clustered, zero faults | — | 42, 43, 44 | 3 |
+| Faulty, 1% | `rate03-seed52`–`seed56` | 42, 43 | 10 |
+| Faulty, 5% | `rate05-seed62`–`seed66` | 42, 43 | 10 |
+| Faulty, 10% | `rate06-seed67`–`seed71` | 42, 43 | 10 |
+
+**BatchNorm recalibration.** This is a separate run with its own directories
+and does not touch the LoRA frozen-state checks. It covers the clustered base
+and all 15 patterns. For each condition:
+
+1. Reset every BatchNorm running mean, running variance, and counter, and set
+   `momentum=None` (cumulative average).
+2. Forward a fixed subset once in `train()` mode under `torch.no_grad()`. The
+   subset is 5,000 of the 45,000 training images, drawn with seed 42, with
+   deterministic evaluation preprocessing. It is fed as 20 equal batches of 250
+   images, and labels are dropped before the loop.
+3. Evaluate in `eval()` mode.
+
+Every weight, bias, and BatchNorm affine parameter was checked to stay exactly
+equal; only the running statistics and counters changed. Each condition's
+before-recalibration counts matched Step 7 exactly.
+
+**Analysis definitions** (fixed in code before any LoRA result existed):
+
+- **Condition statistics:** mean ± sample SD over every run of the condition.
+  At a fault rate that is 5 patterns × 2 seeds, so the before-LoRA SD counts
+  each pattern twice; Step 7's pattern-level SDs are 2.44, 5.01, and 9.07 pp.
+- **Normalized recovery:** R = (after − before) / (clean − before) per run,
+  with clean = 92.28% test. R is undefined for the clean base.
+- **Fault-specific gain:** LoRA(faulty) minus the mean LoRA(clustered) accuracy
+  over its three seeds, per faulty run. A seed-matched version subtracts the
+  LoRA(clustered) run with the same seed.
+- **LoRA minus BatchNorm recalibration:** per pattern, the LoRA mean over its two
+  seeds minus the recalibrated accuracy, then mean ± SD across patterns.
+
+### Measured results (official test set, 10,000 images)
+
+| Base | Runs | Before LoRA | After LoRA | Gain (pp) | R |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Clean | 3 | 92.28% | 92.75% ± 0.11 | +0.47 ± 0.11 | — |
+| Clustered, zero faults | 3 | 83.29% | 92.44% ± 0.14 | +9.15 ± 0.14 | 1.018 ± 0.016 |
+| Faulty, 1% | 10 | 80.53% | 92.31% ± 0.22 | +11.79 ± 2.24 | 1.004 ± 0.020 |
+| Faulty, 5% | 10 | 77.77% | 92.27% ± 0.30 | +14.50 ± 4.74 | 0.999 ± 0.026 |
+| Faulty, 10% | 10 | 64.07% | 92.13% ± 0.11 | +28.06 ± 8.56 | 0.994 ± 0.005 |
+
+After-LoRA ranges were 92.28–92.56% (clustered), 91.76–92.53% (1%), 91.65–92.68%
+(5%), and 91.98–92.38% (10%). R slightly above 1 means the adapted model passed
+the clean reference. That is possible because LoRA on the clean model itself
+gained 0.47 pp.
+
+| Fault rate | LoRA(faulty) − LoRA(clustered), pp | Seed-matched, pp | Range over runs, pp |
+| --- | ---: | ---: | ---: |
+| 1% | −0.13 ± 0.22 | −0.11 ± 0.19 | −0.68 to +0.09 |
+| 5% | −0.17 ± 0.30 | −0.15 ± 0.27 | −0.79 to +0.24 |
+| 10% | −0.31 ± 0.11 | −0.29 ± 0.15 | −0.46 to −0.06 |
+
+| Condition | Before | BatchNorm recalibration | LoRA | LoRA − recalibration (pp) | R, recalibration |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Clustered, zero faults | 83.29% | 89.86% | 92.44% ± 0.14 | +2.58 | 0.731 |
+| Faulty, 1% (5 patterns) | 80.53% ± 2.44 | 89.42% ± 0.19 | 92.31% ± 0.22 | +2.89 ± 0.27 | 0.749 ± 0.052 |
+| Faulty, 5% (5 patterns) | 77.77% ± 5.01 | 89.09% ± 0.31 | 92.27% ± 0.30 | +3.18 ± 0.42 | 0.756 ± 0.088 |
+| Faulty, 10% (5 patterns) | 64.07% ± 9.07 | 87.43% ± 0.48 | 92.13% ± 0.11 | +4.70 ± 0.48 | 0.819 ± 0.041 |
+
+Before-LoRA, recalibration, and LoRA-minus-recalibration SDs are across the 5
+patterns. The LoRA column shows mean ± SD over all 10 runs of each rate.
+Validation results show the same pattern. LoRA(faulty) − LoRA(clustered) on
+validation was −0.07 ± 0.16, −0.15 ± 0.20, and −0.16 ± 0.14 pp. LoRA minus
+recalibration on validation was +2.74, +2.93, +3.18, and +4.67 pp. All values are
+in `analysis.json`.
+
+**Interpretation, limited to these measurements:** the 11.85 pp gain in Step 8 was
+mostly repair of clustering damage, not of fault damage. Most of the clustering
+and fault loss here comes from mismatched BatchNorm running statistics.
+Recalibrating them recovers about three quarters of the gap to the clean model
+(R ≈ 0.73–0.82). LoRA then adds another 2.6–4.7 pp, more at higher fault rates.
+The faults leave a small residual that LoRA does not remove: up to about 0.3 pp
+on average at 10%. Because LoRA(clustered) itself exceeds the clean model,
+"LoRA restores the clean model" overstates what is shown. LoRA restores a
+damaged model to roughly what LoRA achieves on the undamaged clustered one.
+
+### Step 8 regression check
+
+The Step 8 condition was rerun as `resnet18-cifar10-lora-faulty-rate03-seed52-r4-train42`
+and compared with the original Step 8 run, with a 0.3 pp tolerance. It
+reproduced Step 8 **exactly**:
+
+- the same selected epoch (3);
+- identical before/after correct counts (validation 4,013 → 4,616; test
+  7,991 → 9,176);
+- identical cross-entropy (test 0.602161 → 0.238646).
+
+### Run history and provenance
+
+The 36 runs ran across five matrices, all read by the analysis:
+
+| Matrix | Runs used | Status |
+| --- | ---: | --- |
+| `resnet18-cifar10-lora-controls-matrix` | 4 of 36 declared (clean ×3, clustered seed 42) | interrupted |
+| `resnet18-cifar10-lora-controls-b` | 2 (clustered seeds 43, 44) | complete, verified |
+| `resnet18-cifar10-lora-faulty-p001` | 10 | complete, verified |
+| `resnet18-cifar10-lora-faulty-p005` | 10 | complete, verified |
+| `resnet18-cifar10-lora-faulty-p010` | 10 | complete, verified |
+
+The first matrix's process was killed during run 5 when the session that
+launched it ended. That partial run (`resnet18-cifar10-lora-clustered-none-r4-train43`,
+one epoch) was moved intact to `results/_aborted/` and `checkpoints/_aborted/`,
+with a README recording why. The run was then redone under the same run ID.
+The first matrix's `status.json` was set to `interrupted` by hand, with its
+completed-run count and the interrupted run ID; nothing else in it changed.
+The remaining 32 runs ran detached in four matrices from `run_part2.sh`; they
+took 2 h 42 min. Each run took 262–286 s.
+The analysis re-verifies all 36 runs, uses only runs listed in a matrix summary,
+and never reads `_aborted/`. Two files changed between the first matrix and the
+analysis: `recovery_matrix.py` (per-run verification was factored out) and
+`lora_controls.py`. The analysis checks that no other source file used by any
+run changed.
+
+All runs have 145,780 trainable adapter parameters. The selected epoch was 5 in
+32 runs, 4 in two runs, and 3 in two runs. BatchNorm recalibration took 216.6 s
+for 16 conditions.
+
+### Commands and files
+
+```zsh
+.venv/bin/python scripts/run_bn_recalibration.py --config configs/resnet18_cifar10_bn_recalibration.json
+.venv/bin/python scripts/run_lora_matrix.py --config configs/resnet18_cifar10_lora_controls_matrix.json   # interrupted after 4 runs
+nohup caffeinate -i ./run_part2.sh > results/part2_matrices.log 2>&1 &   # remaining 32 runs, four matrices
+.venv/bin/python scripts/analyze_lora_controls.py --config configs/resnet18_cifar10_lora_controls.json
+```
+
+- `src/fault_lora/evaluation/bn_recalibration.py`: label-free recalibration,
+  seeded subset, per-condition records, and post-run verification.
+- `src/fault_lora/evaluation/lora_controls.py`: design validation against Step 7,
+  formulas, multi-matrix loading, the Step 8 regression check, and the figure.
+- `src/fault_lora/training/recovery_matrix.py`: `verify_run`, reused by the
+  analysis.
+- Tests: `tests/test_bn_recalibration.py` (5) and `tests/test_lora_controls.py` (4).
+
+| Artifact | Purpose |
+| --- | --- |
+| `results/resnet18-cifar10-lora-controls/analysis.json` | All condition statistics, per-run values, gains, R, fault-specific gains, recalibration comparison, matrix provenance, and Step 8 regression, for validation and test. |
+| `…/conditions.csv` | One row per split and condition. |
+| `…/step8_regression.json` | Step 8 rerun comparison. |
+| `…/lora_controls.png` / `.pdf` | The figure above; byte-identical copies in `docs/figures/`. |
+| `…/verification.json`, `manifest.json` | Re-verification of all 36 runs, recomputation from re-read inputs, 111 input-file hashes, and plot hashes. |
+| `results/resnet18-cifar10-bn-recalibration-seed42/` | Per-condition records, CSV, aggregate, calibration indices, verification; statistics in the matching checkpoint directory. |
+| `results/resnet18-cifar10-lora-*-r4-train*/` | Per-run artifacts as in Step 8. |
+
+The full offline suite passes **60 tests**.
+
+### Limitations
+
+- **Seeds and patterns:** two training seeds per faulty pattern and three per
+  control; five patterns per rate. SDs describe these runs only.
+- **One recipe:** rank 4 on all layers, five epochs. Smaller ranks or fewer
+  epochs might separate faulty and clustered bases more.
+- **Recalibration settings:** one subset size (5,000), batch size (250), and
+  seed. Combining recalibration with LoRA was not tested; LoRA runs keep the
+  original frozen statistics.
+- **No transfer test:** each adapter was trained and tested on the same fixed
+  pattern, so it may simply memorize that one pattern.
+- **Model and fault model:** results are for ResNet-18/CIFAR-10 and the uniform
+  adjacent-level simulator only. A model without BatchNorm, such as TinyBERT
+  with LayerNorm, may behave differently.
+
 ## Next steps: 9–10 (not implemented)
 
-9. **Controlled comparisons:** compare original, clustered, faulty, and adapted
-   models, including matched adapter training on clean and zero-fault clustered
-   bases. Repeat across fault patterns and training seeds, test transfer to unseen
-   patterns, vary rank and placement, and record parameter, storage, and computation overhead.
+9. **Remaining controlled comparisons:** Step 9b covered matched clean and
+   clustered bases, repeated patterns and seeds, and BatchNorm recalibration.
+   Still open: transfer to unseen patterns, rank and placement, and
+   computation/storage overhead.
 10. **Qwen extension:** reuse the validated memory/fault workflow with a language
     model, tokenizer, text dataset, and appropriate language-model metrics.
 
