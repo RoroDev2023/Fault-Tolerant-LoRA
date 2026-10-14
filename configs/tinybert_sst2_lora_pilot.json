@@ -1,0 +1,23 @@
+{
+  "run_id": "tinybert-sst2-lora-faulty-linemb-rate07-seed1030-r4-train42",
+  "base_kind": "faulty",
+  "condition": "linear-and-embeddings",
+  "pattern_id": "rate07-seed1030",
+  "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+  "rank": 4,
+  "alpha": 4.0,
+  "seed": 42,
+  "epochs": 2,
+  "evaluations_per_epoch": 2,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "max_grad_norm": 1.0,
+  "schedule": "cosine-per-step",
+  "expected_training_examples": 62349,
+  "loss_window_steps": 100,
+  "device": "cpu",
+  "cpu_threads": 4,
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}

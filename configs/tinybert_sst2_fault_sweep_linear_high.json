@@ -1,0 +1,14 @@
+{
+  "run_id": "tinybert-sst2-fault-sweep-linear-high-seed72",
+  "condition": "linear-high-rate",
+  "probabilities": [0.2, 0.3, 0.5, 0.75, 1.0],
+  "patterns_per_rate": 5,
+  "first_seed": 72,
+  "first_rate_label": 7,
+  "source_audit_results": "results/tinybert-sst2-fault-checks-seed42",
+  "previous_sweep_results": "results/tinybert-sst2-fault-sweep-seed42",
+  "device": "cpu",
+  "cpu_threads": 4,
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}

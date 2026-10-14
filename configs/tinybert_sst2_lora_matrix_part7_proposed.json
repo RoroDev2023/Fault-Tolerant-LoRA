@@ -1,0 +1,752 @@
+{
+  "matrix_id": "tinybert-sst2-lora-matrix-part7",
+  "recipe": {
+    "rank": 4,
+    "alpha": 4.0,
+    "epochs": 2,
+    "evaluations_per_epoch": 2,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "max_grad_norm": 1.0,
+    "schedule": "cosine-per-step",
+    "expected_training_examples": 62349,
+    "loss_window_steps": 100,
+    "device": "mps",
+    "cpu_threads": 4
+  },
+  "runs": [
+    {
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-seed42",
+      "seed": 42
+    },
+    {
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-seed42",
+      "seed": 43
+    },
+    {
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-seed42",
+      "seed": 44
+    },
+    {
+      "base_kind": "clustered",
+      "condition": "linear-only",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-seed42",
+      "seed": 42
+    },
+    {
+      "base_kind": "clustered",
+      "condition": "linear-only",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-seed42",
+      "seed": 43
+    },
+    {
+      "base_kind": "clustered",
+      "condition": "linear-only",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-seed42",
+      "seed": 44
+    },
+    {
+      "base_kind": "clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 44
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate08-seed77",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate08-seed77",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate08-seed78",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate08-seed78",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate08-seed79",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate08-seed79",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate09-seed82",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate09-seed82",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate09-seed83",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate09-seed83",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate09-seed84",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate09-seed84",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate10-seed87",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate10-seed87",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate10-seed88",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate10-seed88",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate10-seed89",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate10-seed89",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate11-seed92",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate11-seed92",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate11-seed93",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate11-seed93",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate11-seed94",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-only",
+      "pattern_id": "rate11-seed94",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1030",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "base_kind": "faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    }
+  ],
+  "transfers": [
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed77",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed78",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed79",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed77",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed78",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed79",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed77",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed78",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed79",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed82",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed83",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed84",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed82",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed83",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed84",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed82",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed83",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate09-seed84",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed87",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed88",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed89",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed87",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed88",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed89",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed87",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed88",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate10-seed89",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed92",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed93",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 3,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed94",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed92",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed93",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 4,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed94",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed92",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed93",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 5,
+      "base_kind": "faulty",
+      "pattern_id": "rate11-seed94",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1030",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1030",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1030",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 6,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 7,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    },
+    {
+      "adapter_run": 8,
+      "base_kind": "faulty",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+    }
+  ],
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}

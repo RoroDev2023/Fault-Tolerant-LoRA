@@ -1,0 +1,8 @@
+{
+  "run_id": "tinybert-sst2-clean-twotest-seed42",
+  "source_results": "results/tinybert-sst2-clean-seed42",
+  "expected_original_test_examples": 1820,
+  "device": "cpu",
+  "cpu_threads": 4,
+  "results_root": "results"
+}

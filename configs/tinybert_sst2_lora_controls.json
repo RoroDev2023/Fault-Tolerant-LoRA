@@ -1,0 +1,11 @@
+{
+  "run_id": "tinybert-sst2-lora-controls",
+  "source_matrix_config": "configs/tinybert_sst2_lora_matrix_part7_proposed.json",
+  "extra_runs": ["results/tinybert-sst2-lora-faulty-linemb-rate07-seed1030-r4-train42-mps"],
+  "conditions": {"linear-only": [0.3, 0.5, 0.75, 1.0], "linear-and-embeddings": [0.1, 0.2, 0.5]},
+  "control_seeds": [42, 43, 44],
+  "faulty_seeds": [42, 43],
+  "patterns_per_rate": 3,
+  "device": "mps",
+  "results_root": "results"
+}
