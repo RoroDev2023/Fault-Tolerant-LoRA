@@ -25,7 +25,10 @@ added a batch runner and an evaluation-only adapter-transfer utility, and ran
 no new training. Step 10a added the second model: a downloaded TinyBERT SST-2
 classifier, evaluated with no fine-tuning at **88.76%** on the official
 872-sentence validation split, with pinned model/data revisions and a saved
-selection split. Clustering, faults, and LoRA on TinyBERT remain future work.
+selection split. Step 10b applied the unchanged k=16 clustering and fault
+simulator to TinyBERT's 26 Linear weights. Across 0–10% fault rates, mean
+accuracy stayed within 0.55 percentage points of the clustered reference on
+both test sets. LoRA recovery on TinyBERT remains future work.
 
 ## Completed workflow
 
@@ -39,6 +42,7 @@ selection split. Clustering, faults, and LoRA on TinyBERT remain future work.
 8. [LoRA recovery](#step-8-lora-recovery)
 9. [Generalized recovery runner (9a)](#step-9a-generalized-recovery-runner)
 10. [TinyBERT / SST-2 clean baseline (10a)](#step-10a-tinybert--sst-2-clean-baseline)
+11. [TinyBERT clustering and fault sweep (10b)](#step-10b-tinybert-clustering-and-fault-sweep)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -63,7 +67,7 @@ added only in the later steps documented below.
 | `configs/` | Baseline, fault-generation, audit, sweep, and LoRA recovery configurations. |
 | `scripts/` | Environment checks, baselines, fault generation/audits, sweeps, LoRA recovery, and the recovery matrix. |
 | `tests/` | Offline baseline, representation, and integrity checks. |
-| `docs/figures/` | Repository copies of verified Step 7 and Step 8 PNG/PDF figures embedded in this README. |
+| `docs/figures/` | Repository copies of verified Step 7, Step 8, and Step 10b PNG/PDF figures embedded in this README. |
 | `results/` | Generated measurements and plots; ignored by Git. |
 | `checkpoints/` | Pretrained weights, clean/decoded checkpoints, clustered encodings, sparse patterns, and adapter-only checkpoints; `hf-cache/` holds the pinned TinyBERT files; ignored by Git. |
 | `data/` | Downloaded CIFAR-10 files and, under `hf-cache/`, the pinned SST-2 files; ignored by Git. |
@@ -1078,7 +1082,8 @@ GLUE stores sentences with a trailing space, so byte comparison finds nothing
 by construction; the meaningful comparison collapses whitespace. One test
 sentence, `what 's next ?`, is also a train-split phrase. **The overlap is not
 zero, so the set was skipped and no accuracy was measured on it.** The check
-and the matching sentence are saved in `second_test_set.json`.
+and the matching sentence are saved in `second_test_set.json`. Step 10b later
+admitted this set with that one sentence removed, as a separate run.
 
 ### Tokenization
 
@@ -1108,20 +1113,25 @@ The run stops before evaluating any test set if these checks fail.
 
 The downloaded checkpoint was evaluated as-is on CPU with batch size 256:
 
-| Split | Examples | Correct | Accuracy | Mean cross-entropy |
+| Test set | Examples | Correct | Accuracy | Mean cross-entropy |
 | --- | ---: | ---: | ---: | ---: |
-| Selection | 5,000 | 4,779 | 95.58% | 0.1871 |
-| Test (official validation) | 872 | 774 | 88.76% | 0.5172 |
+| `sst2-validation-872` (official validation) | 872 | 774 | 88.76% | 0.5172 |
 
 The test result is one sentence above the model card's 773 of 872 (88.65%,
 loss 0.5142). The cause was not identified; a separate, unsaved diagnostic gave
 774 at batch sizes 1, 8, 256, and 872 and with padding to 128 tokens, so
 batching and padding do not explain it. The run took 16.2 seconds.
 
-**Selection accuracy is not a held-out measurement of this checkpoint.** Its
-publisher fine-tuned on the SST-2 train split, which contains all 5,000
-selection examples, so 95.58% is accuracy on data the model was trained on.
-The split is held out from later LoRA training only.
+**Selection-split accuracy is not a held-out estimate for this checkpoint.**
+Its publisher fine-tuned on the full SST-2 train split, which contains all 5,000
+selection examples. The split is therefore used only for checkpoint selection
+in later steps and is never reported as a result. It is held out from later
+LoRA training only. Selection measurements are saved in each run's JSON
+records for that purpose; the label-order check above also uses it.
+
+Step 10b added the second test set, `sst2-original-test-1820`, in a separate
+run; [its clean result](#step-10b-tinybert-clustering-and-fault-sweep) is
+reported there.
 
 ### Evaluation function
 
@@ -1215,16 +1225,263 @@ reversed label order or a missing file.
   currently selects Conv2d/Linear weights only, so embeddings are not yet
   eligible cells.
 
+## Step 10b: TinyBERT clustering and fault sweep
+
+**Purpose:** repeat Steps 4–7 on TinyBERT with the same clustering algorithm
+and fault simulator, measuring clustering loss and fault loss on two separately
+reported test sets. **Nothing was trained.**
+
+No existing source file was modified. `cluster_model`, `decode_state`,
+`storage_estimates`, the fault simulator in `memory/faults.py`, the Step 6
+oracle `inspect_transitions`, and the Step 7 `sweep_plan` are imported
+unchanged by new sibling modules. Steps 3–10a record the SHA-256 of every
+existing `src/fault_lora/` file and refuse to continue when one changes. All
+runs used the CPU.
+
+### Test sets and reporting
+
+Every result below is reported per test set; the two are never pooled.
+
+| Name | Source | Examples | Negative / positive |
+| --- | --- | ---: | --- |
+| `sst2-validation-872` | official SST-2 validation split (Step 10a's test split) | 872 | 428 / 444 |
+| `sst2-original-test-1820` | `SetFit/sst2` test split at the pinned revision, one sentence removed | 1,820 | 912 / 908 |
+
+The removed sentence is SetFit test row 1450, `what 's next ?` (label 1,
+positive). It equals SST-2 train row 26,224 (`what 's next ? `, label 1) after
+whitespace normalization, so it is not held out from the data the checkpoint
+was fine-tuned on. The rule removes every SetFit test sentence whose
+whitespace-normalized text matches any SST-2 train or validation sentence. No
+other sentence matched. The removal, both matching rows, and a content hash of
+each test set are saved in `test_sets.json` of every Step 10b run.
+
+The selection split is measured in every run for later checkpoint selection
+only. As noted in Step 10a, it is not a held-out estimate for this checkpoint
+and is not reported as a result.
+
+The clean checkpoint was first re-evaluated under a new run ID,
+`tinybert-sst2-clean-twotest-seed42`. That run reproduced Step 10a's counts
+exactly and added the second test set. The Step 10a run was left as it was.
+
+| Test set | Correct | Clean accuracy | Mean cross-entropy |
+| --- | ---: | ---: | ---: |
+| `sst2-validation-872` | 774 / 872 | 88.76% | 0.5172 |
+| `sst2-original-test-1820` | 1,608 / 1,820 | 88.35% | 0.5032 |
+
+### Eligible cells: Linear weights only
+
+`cluster_model`'s existing eligibility rule (Conv2d/Linear weights) was run on
+the real checkpoint and selected exactly the **26 `nn.Linear` weights**, with
+**4,650,672 eligible weights**. In each of the 4 layers these are the query,
+key, value, attention-output, FFN-intermediate, and FFN-output weights, plus
+the pooler dense and classifier weights. The run requires this list to equal
+the model's Linear weights and records it in `scope.json`.
+
+Kept exactly and treated as reliable storage, never clustered or faulted:
+
+| Protected state | Tensors | Values | Share of 14,350,874 parameters |
+| --- | ---: | ---: | ---: |
+| Embedding tables (word, position, token type) | 3 | 9,683,232 | 67.5% |
+| LayerNorm weights and biases | 18 | 5,616 | 0.04% |
+| Linear biases | 26 | 11,354 | 0.08% |
+| **Eligible Linear weights** | 26 | 4,650,672 | **32.4%** |
+
+**The embeddings (9.68 million of 14.35 million parameters, 67.5%; the word
+embeddings alone are 66.4%) are protected in this first condition.** The
+fault-rate denominator therefore covers only the Linear weights: a 1% rate
+corrupts about 46,500 cells, roughly 0.32% of all parameters. This differs from
+ResNet-18, whose 21 Conv2d/Linear weights hold nearly every parameter.
+
+### Clustering (Step 4 settings)
+
+The source was the Step 10a checkpoint, whose SHA-256
+`eace4b3b8cb22e94151b3091b9a6b216afc1443d371cb449f68ba5d512d347f6` is pinned in
+the configuration and checked. Settings were unchanged from Step 4:
+
+- 16 clusters per tensor, seed 42 plus the tensor ordinal;
+- scalar Lloyd k-means with k-means++ initialization, 3 initializations, 100
+  iterations, and tolerance 0.0001;
+- sorted codebooks with an identity index-to-level mapping, one cell per index.
+
+Every tensor received 16 representatives. The most iterations any tensor
+needed was 75, so none reached the limit. Per-tensor relative L2 weight error
+was 9.0%–20.0% (median 12.1%). The saved encoding reconstructs its dense
+checkpoint exactly, and its untouched state equals the clean checkpoint.
+
+| Test set | Clean | Clustered, zero faults | Clustering loss (clean − clustered) | Cross-entropy change |
+| --- | ---: | ---: | ---: | ---: |
+| `sst2-validation-872` | 88.76% (774) | 88.30% (770) | +0.46 pp | 0.5172 → 0.5123 |
+| `sst2-original-test-1820` | 88.35% (1,608) | 88.79% (1,616) | **−0.44 pp** | 0.5032 → 0.4961 |
+
+Clustering changed accuracy by 4 and 8 sentences, in opposite directions on
+the two test sets, and lowered cross-entropy on both. Clustering loss for
+ResNet-18 was 8.99 points. The negative loss on `sst2-original-test-1820` is
+one measurement with one clustering seed and is within a few sentences of
+zero; it does not show that clustering improves this model.
+
+Storage, with the same accounting as Step 4: the dense state holds 57,403,496
+tensor bytes; the encoding holds 43,459,800, a **1.32×** ratio. An ideal 4-bit
+packing would be 41,134,464 bytes (1.40×). The ratio is small because the
+protected embeddings (38.8 MB of untouched float32 state) dominate. The
+serialized encoding is 43,509,102 bytes.
+
+### Fault-injection audit (Step 6 checks)
+
+`tinybert-sst2-fault-checks-seed42` ran the Step 6 checks on the saved encoding
+with the unchanged simulator and the Step 6 independent decoding oracle. **All
+eight passed:**
+
+| Check | Actual result |
+| --- | --- |
+| Source integrity | Clean, encoding, and dense hashes matched; the encoding reconstructed the dense checkpoint exactly; reliable state equals the clean checkpoint; clustered tensors are exactly the 26 Linear weights. |
+| Zero faults | All 73 state tensors equal the clustered model; logits for a fixed synthetic token batch (seed 0) were finite and exactly equal. |
+| Reference pattern | A p=0.01, seed 42 pattern, saved to a temporary file and reloaded, selected 46,206 of 4,650,672 cells (0.9935%; 23,233 up, 22,973 down). Every transition was a valid ±1 neighbor, and independent decoding matched the simulator for every tensor. |
+| Repeated application | Two applications were identical and the baseline was unchanged. |
+| Same seed | Seed 42 regenerated every position and transition. |
+| Different seed | Seed 43 produced a different valid pattern (46,840 cells). |
+| All-cell selection | p=1 moved all 4,650,672 cells by one level, including 8,296 lower-boundary and 9,055 upper-boundary cells, all moving inward; reliable state was unchanged. |
+| Source preservation | The in-memory fingerprint and all 38 input-file hashes were unchanged. |
+
+TinyBERT has no separately saved Step 5 pattern, so the audit generates its
+own reference pattern; it is not a performance experiment. The sweep refuses
+to start unless this audit passed and its inputs are unchanged.
+
+### Fault sweep (Step 7 design)
+
+![Accuracy versus actual fault rate in TinyBERT Linear weights on the SST-2 validation split and the SST-2 original test split with overlap removed, with individual patterns, means, sample standard deviations, and clean and clustered references.](docs/figures/tinybert-sst2-step10b-fault-sweep.png)
+
+[Download the PDF figure](docs/figures/tinybert-sst2-step10b-fault-sweep.pdf).
+
+The sweep used the Step 7 design without change: rates 0, 0.1, 0.5, 1, 2, 5,
+and 10%; five static patterns per nonzero rate; seeds 42–71 allocated in
+ascending rate order by Step 7's own `sweep_plan`; and IDs `rate00-zero`,
+`rate01-seed42` … `rate06-seed71`. Every pattern is applied to the uncorrupted
+encoding and the complete state is reloaded before each evaluation, so faults
+never accumulate. The zero pattern reproduced the clustering run's counts
+exactly, and the clean replay reproduced the two-test clean run.
+
+Accuracy is mean ± sample SD over five patterns, in percentage points. The
+drop is measured from the clustered zero-fault reference; negative means
+higher than that reference.
+
+| Selection probability | Mean corrupted cells | `sst2-validation-872` accuracy | Drop | `sst2-original-test-1820` accuracy | Drop |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0% | 0 | 88.30% (reference) | 0.00 pp | 88.79% (reference) | 0.00 pp |
+| 0.1% | 4,703.0 | 88.30% ± 0.11 pp | 0.00 pp | 88.89% ± 0.18 pp | −0.10 pp |
+| 0.5% | 23,184.0 | 88.19% ± 0.33 pp | 0.11 pp | 88.79% ± 0.23 pp | 0.00 pp |
+| 1% | 46,469.8 | 88.37% ± 0.41 pp | −0.07 pp | 88.42% ± 0.20 pp | 0.37 pp |
+| 2% | 93,300.4 | 88.46% ± 0.13 pp | −0.16 pp | 88.51% ± 0.34 pp | 0.29 pp |
+| 5% | 232,388.8 | 88.28% ± 0.25 pp | 0.02 pp | 88.55% ± 0.23 pp | 0.24 pp |
+| 10% | 464,959.2 | 87.75% ± 0.27 pp | 0.55 pp | 88.27% ± 0.39 pp | 0.52 pp |
+
+**This model is nearly insensitive to these faults.** Up to 5%, no rate's mean
+differs from the clustered reference by more than 0.16 points on
+`sst2-validation-872` or 0.37 points on `sst2-original-test-1820` (under two and
+about seven sentences). Pattern spread is of a similar size. At 10% the mean drop is about half a point on both
+test sets: worst patterns 87.39% and 87.80%. Fourteen of the 30 faulty
+patterns scored above the clustered reference on at least one test set (10 on
+`sst2-validation-872`, 7 on `sst2-original-test-1820`). For
+comparison, ResNet-18's mean test accuracy fell 19.22 points at 10%.
+
+A one-level substitution is not numerically small here. Its expected size is
+0.30–0.54 of each tensor's weight standard deviation (median 0.37), from an
+unsaved diagnostic on the saved encoding. The following explanations are
+hypotheses; none was measured:
+
+1. The 67.5% of parameters in the embeddings are protected, so faults reach
+   only a third of the model.
+2. Each faulted weight is one of 312 or 1,200 terms in a dot product.
+   Independent, zero-mean ±1-level errors may largely cancel.
+3. LayerNorm re-normalizes activations after every sublayer, using statistics
+   computed from the current input. ResNet's BatchNorm uses fixed running
+   statistics, which cannot absorb a shift.
+4. SST-2 is a binary task with many confident predictions, so small logit
+   changes rarely flip a label.
+
+### Commands, files, and verification
+
+Run in this order from the project root (CPU, no downloads):
+
+```zsh
+.venv/bin/python scripts/run_tinybert_clean_eval.py --config configs/tinybert_sst2_clean_twotest.json
+.venv/bin/python scripts/run_tinybert_clustered.py --config configs/tinybert_sst2_clustered.json
+.venv/bin/python scripts/check_tinybert_faults.py --config configs/tinybert_sst2_fault_checks.json
+.venv/bin/python scripts/run_tinybert_fault_sweep.py --config configs/tinybert_sst2_fault_sweep.json
+```
+
+Each step verifies the previous step's status, recorded file hashes, and
+source-code hashes before it starts, and refuses to overwrite an existing run
+directory. Measured times: 9.3 s for the clean evaluation, 26.0 s for
+clustering with paired evaluation, 1.4 s for the audit after loading, and
+284 s for the sweep.
+
+| Module | Role |
+| --- | --- |
+| `evaluation/tinybert_sources.py` | Verified Step 10a inputs, the two test sets and the removal rule, loaders, and model rebuilding. |
+| `evaluation/tinybert_clean_eval.py` | Two-test clean evaluation and its verification. |
+| `evaluation/tinybert_clustered.py` | Clustering with `cluster_model` and paired clean/clustered evaluation. |
+| `evaluation/tinybert_fault_checks.py` | The eight-check audit, reusing `inspect_transitions`. |
+| `evaluation/tinybert_fault_sweep.py` | The sweep, per-split aggregation, CSV, the figure, and post-run verification. |
+
+Results go under `results/<run_id>/`; checkpoints go under
+`checkpoints/<run_id>/`:
+
+| Run | Key artifacts |
+| --- | --- |
+| `tinybert-sst2-clean-twotest-seed42` | `metrics.json`, `test_sets.json` (removal record), `verification.json`. |
+| `tinybert-sst2-clustered-k16-seed42` | Checkpoints `encoding.pt` and `clustered_dense.pt`; `scope.json` (eligible list and protected state), `layers.json`, `storage.json`, `metrics.json` (paired, per test set). |
+| `tinybert-sst2-fault-checks-seed42` | `report.json` with all eight checks and input hashes. |
+| `tinybert-sst2-fault-sweep-seed42` | All 31 checkpoint `patterns/*.pt` (43,952,519 bytes), per-pattern JSON, `measurements.json` / `.csv`, `aggregate.json`, `references.json`, PNG/PDF figure, `verification.json`. |
+
+The sweep's post-run verification passed. It re-read all 31 saved patterns and
+checked them against their hashes and recomputed counts. Each pattern was
+regenerated from its seed, and its dense state was decoded independently with
+the Step 6 oracle. Fault losses, the aggregate, and the CSV were recomputed;
+the zero pattern was compared with the clustered reference; and the plot,
+42 input-file, and source-code hashes were checked. The README figures are
+byte-identical copies of the run's PNG and PDF.
+
+The full offline suite passes **80 tests** (74 existing, 6 new, in
+`tests/test_tinybert_memory.py`). The new tests check:
+
+- `cluster_model` selects exactly the Linear weights of a tiny BERT;
+- the unchanged clustering and fault code preserve every reliable tensor and
+  give exact zero-fault logits;
+- the second-test filter removes and records overlapping sentences and rejects
+  hidden labels;
+- the per-split aggregate rejects incomplete, off-plan, or reordered records;
+- invalid configurations are rejected;
+- a complete offline pipeline works: Step 10a, two-test evaluation, clustering
+  (including a wrong-hash rejection), audit, and sweep. The sweep's
+  verification must pass, the sweep refuses to start before the audit, and it
+  detects a changed input.
+
+### Limitations
+
+- One clean checkpoint, one clustering seed, and five fault patterns per rate.
+  The test sets have 872 and 1,820 sentences, so one sentence is 0.11 and 0.055
+  points. Most differences reported above are a few sentences.
+- Embeddings, LayerNorm, biases, codebooks, and mappings are treated as
+  reliable. Including the embedding tables as faulty cells would be a separate
+  condition with a different denominator; it has not been run.
+- The fault model is still the uniform adjacent-level simplification with one
+  cell per index, not a hardware-calibrated model.
+- **At these rates there is little fault loss to recover:** at most 0.55 points
+  on average. A TinyBERT LoRA recovery experiment at 0–10% faults in Linear
+  weights alone would therefore separate clustering repair, fault repair, and
+  additional task training poorly.
+
 ## Next steps: 9–10 (not implemented)
 
 9. **Controlled comparisons:** compare original, clustered, faulty, and adapted
    models, including matched adapter training on clean and zero-fault clustered
    bases. Repeat across fault patterns and training seeds, test transfer to unseen
    patterns, vary rank and placement, and record parameter, storage, and computation overhead.
-10. **Language-model extension:** Step 10a established the TinyBERT / SST-2
-    clean baseline. Remaining: generalize `memory/` and the LoRA code so the
-    same clustering, fault, and recovery workflow runs on both models, then
-    repeat Steps 4–9 on TinyBERT with selection on the saved selection split.
+10. **Language-model extension:** Steps 10a–10b established the TinyBERT /
+    SST-2 clean, clustered, and faulty baselines through sibling modules.
+    Remaining: LoRA recovery on TinyBERT using `attach_lora` on its Linear
+    layers, with selection on the saved selection split. Higher fault rates or
+    faulty embeddings may be needed first to produce measurable fault loss.
 
 Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,
@@ -1253,6 +1510,9 @@ assumed to exist locally.
 - CIFAR-10 splits, preprocessing, the eligible-cell denominator, and the initial
   sweep rates/repetition count are recorded. Step 8 records the first
   rank-4/all-layer/five-epoch recipe; wider rank/placement studies remain future work.
+- TinyBERT (Step 10b) clusters and faults only its 26 Linear weights; its
+  embedding tables (67.5% of parameters), LayerNorm parameters, and biases are
+  reliable, so its fault-rate denominator is 4,650,672 cells.
 - Recovery for a fixed pattern and transfer to unseen patterns are separate
   research questions. Step 8 measured recovery on one fixed pattern; transfer
   to unseen patterns remains untested.
