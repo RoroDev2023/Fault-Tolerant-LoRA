@@ -1,0 +1,15 @@
+{
+  "run_id": "tinybert-sst2-clustered-k16-linear-emb-reuse10b-seed42",
+  "num_clusters": 16,
+  "seed": 42,
+  "n_init": 3,
+  "max_iter": 100,
+  "tol": 0.0001,
+  "clustering_threads": 4,
+  "device": "cpu",
+  "clean_checkpoint_sha256": "eace4b3b8cb22e94151b3091b9a6b216afc1443d371cb449f68ba5d512d347f6",
+  "source_clean_eval_results": "results/tinybert-sst2-clean-twotest-seed42",
+  "step10b_clustered_results": "results/tinybert-sst2-clustered-k16-seed42",
+  "checkpoint_root": "checkpoints",
+  "results_root": "results"
+}

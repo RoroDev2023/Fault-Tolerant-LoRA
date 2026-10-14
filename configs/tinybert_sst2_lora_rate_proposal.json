@@ -1,0 +1,9 @@
+{
+  "run_id": "tinybert-sst2-lora-rate-proposal",
+  "threshold_percentage_points": 3.0,
+  "conditions": {
+    "linear-only": ["results/tinybert-sst2-fault-sweep-seed42", "results/tinybert-sst2-fault-sweep-linear-high-seed72"],
+    "linear-and-embeddings": ["results/tinybert-sst2-fault-sweep-linear-emb-seed1000"]
+  },
+  "results_root": "results"
+}

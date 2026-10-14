@@ -1,0 +1,8 @@
+{
+  "run_id": "tinybert-sst2-fault-checks-linear-emb-seed42",
+  "source_clustered_results": "results/tinybert-sst2-clustered-k16-linear-emb-reuse10b-seed42",
+  "reference_probability": 0.01,
+  "reference_seed": 42,
+  "cpu_threads": 4,
+  "results_root": "results"
+}
