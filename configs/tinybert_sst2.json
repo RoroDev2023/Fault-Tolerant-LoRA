@@ -1,0 +1,23 @@
+{
+  "run_id": "tinybert-sst2-clean-seed42",
+  "seed": 42,
+  "model_repo": "Vishnou/TinyBERT_SST2",
+  "model_revision": "5aa94d561e626f70a4380e2a51c786e64f3acad7",
+  "dataset_repo": "stanfordnlp/sst2",
+  "dataset_revision": "8d51e7e4887a4caaa95b3fbebbf53c0490b58bbb",
+  "second_test_repo": "SetFit/sst2",
+  "second_test_revision": "00ea8ccb7a54b4e3780a3e51aa3f80361ff849c0",
+  "selection_examples": 5000,
+  "expected_train_examples": 67349,
+  "expected_test_examples": 872,
+  "label_names": ["negative", "positive"],
+  "model_card_accuracy": 0.8864678899082569,
+  "max_length": 128,
+  "evaluation_batch_size": 256,
+  "device": "cpu",
+  "cpu_threads": 4,
+  "model_cache": "checkpoints/hf-cache",
+  "data_cache": "data/hf-cache",
+  "checkpoint_root": "checkpoints",
+  "results_root": "results"
+}

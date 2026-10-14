@@ -22,8 +22,10 @@ with all base parameters and normalization buffers frozen. Its paired test
 accuracy changed from 79.91% to 91.76%.
 Step 9a generalized that recovery code to clean, clustered, and faulty bases,
 added a batch runner and an evaluation-only adapter-transfer utility, and ran
-no new training. Controlled comparisons and the language-model extension remain
-future work.
+no new training. Step 10a added the second model: a downloaded TinyBERT SST-2
+classifier, evaluated with no fine-tuning at **88.76%** on the official
+872-sentence validation split, with pinned model/data revisions and a saved
+selection split. Clustering, faults, and LoRA on TinyBERT remain future work.
 
 ## Completed workflow
 
@@ -36,6 +38,7 @@ future work.
 7. [Fault-rate experiments](#step-7-fault-rate-experiments)
 8. [LoRA recovery](#step-8-lora-recovery)
 9. [Generalized recovery runner (9a)](#step-9a-generalized-recovery-runner)
+10. [TinyBERT / SST-2 clean baseline (10a)](#step-10a-tinybert--sst-2-clean-baseline)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -52,20 +55,20 @@ added only in the later steps documented below.
 | Path | Purpose |
 | --- | --- |
 | `src/fault_lora/` | Root Python package for the research workflow. |
-| `src/fault_lora/models/` | ResNet-18 loading and checkpoint restoration; convolutional and linear LoRA adapters. |
-| `src/fault_lora/data/` | Dataset preparation, preprocessing, and split handling. |
+| `src/fault_lora/models/` | ResNet-18 loading and checkpoint restoration; convolutional and linear LoRA adapters; pinned TinyBERT loading and layer layout. |
+| `src/fault_lora/data/` | Dataset preparation, preprocessing, and split handling for CIFAR-10 and SST-2. |
 | `src/fault_lora/memory/` | Scalar clustering, codebooks, typed indices, reversible physical mappings, and static adjacent-level patterns; future shared component integration. |
-| `src/fault_lora/evaluation/` | Classification metrics, artifact audits, controlled comparisons, and fault-rate plots. |
+| `src/fault_lora/evaluation/` | Classification metrics for tensor and dict-of-tensor batches, artifact audits, controlled comparisons, fault-rate plots, and the TinyBERT clean evaluation. |
 | `src/fault_lora/training/` | Clean CIFAR-10 fine-tuning, adapter-only recovery training on any base, the recovery matrix runner, and adapter-transfer evaluation. |
 | `configs/` | Baseline, fault-generation, audit, sweep, and LoRA recovery configurations. |
 | `scripts/` | Environment checks, baselines, fault generation/audits, sweeps, LoRA recovery, and the recovery matrix. |
 | `tests/` | Offline baseline, representation, and integrity checks. |
 | `docs/figures/` | Repository copies of verified Step 7 and Step 8 PNG/PDF figures embedded in this README. |
 | `results/` | Generated measurements and plots; ignored by Git. |
-| `checkpoints/` | Pretrained weights, clean/decoded checkpoints, clustered encodings, sparse patterns, and adapter-only checkpoints; ignored by Git. |
-| `data/` | Downloaded CIFAR-10 files; ignored by Git. |
+| `checkpoints/` | Pretrained weights, clean/decoded checkpoints, clustered encodings, sparse patterns, and adapter-only checkpoints; `hf-cache/` holds the pinned TinyBERT files; ignored by Git. |
+| `data/` | Downloaded CIFAR-10 files and, under `hf-cache/`, the pinned SST-2 files; ignored by Git. |
 | `.venv/` | Local Python virtual environment; ignored by Git. |
-| `requirements.txt` | Exact versions of the five direct dependencies. |
+| `requirements.txt` | Exact versions of the seven direct dependencies. |
 | `requirements-macos-arm64.lock.txt` | Platform-specific versions and wheel hashes for all resolved dependencies. |
 
 The root-anchored `/data/` ignore rule excludes downloaded datasets while
@@ -119,8 +122,10 @@ CPU and MPS tensor execution were verified before model experiments began.
 | Matplotlib | 3.11.2 | Validation/test fault-rate plots. |
 
 These versions were selected by resolving compatible binary wheels for the
-actual environment and verifying them together. Transformers and PEFT are
-deferred until the language-model or adapter steps need them.
+actual environment and verifying them together. Step 10a added `transformers`
+5.19.0 and `datasets` 5.1.0 and regenerated the lockfile, which now pins 64
+packages; the 28-package count below describes the original Step 2 lockfile.
+PEFT is not used: the adapters are this repository's own.
 
 On a matching macOS arm64 / CPython 3.11 environment, install the full lockfile:
 
@@ -990,14 +995,236 @@ own base and runs on other bases.
 - Step 3–7 source files were not modified. `training/recovery.py` was, so its
   hash differs from the one recorded by the Step 8 run.
 
+## Step 10a: TinyBERT / SST-2 clean baseline
+
+**Purpose:** add a second model and task, a small text classifier, and fix its
+data splits, tokenization, label order, and clean reference before any
+clustering, fault, or LoRA experiment touches it. **Nothing was trained.**
+
+### Model and data
+
+| Item | Pinned source | Revision |
+| --- | --- | --- |
+| Model and tokenizer | [`Vishnou/TinyBERT_SST2`](https://huggingface.co/Vishnou/TinyBERT_SST2), a fine-tune of `huawei-noah/TinyBERT_General_4L_312D` | `5aa94d561e626f70a4380e2a51c786e64f3acad7` |
+| Dataset | [`stanfordnlp/sst2`](https://huggingface.co/datasets/stanfordnlp/sst2) | `8d51e7e4887a4caaa95b3fbebbf53c0490b58bbb` |
+| Candidate second test set | [`SetFit/sst2`](https://huggingface.co/datasets/SetFit/sst2) | `00ea8ccb7a54b4e3780a3e51aa3f80361ff849c0` |
+
+Only full 40-character commit hashes are accepted; a branch or tag name is
+rejected. The model and its tokenizer come from the same repository commit. Six
+files are fetched (`config.json`, `model.safetensors`, the three tokenizer
+files, and `vocab.txt`); the repository's pickled `training_args.bin` is not
+downloaded. Model files are cached under `checkpoints/hf-cache/` and dataset
+files under `data/hf-cache/`. The weight file `model.safetensors` is 57,411,808
+bytes with SHA-256
+`2b15f95bae36f14f3124420e8341531a6f4dc312b3d1fe5bf3e849480e39dcc4`; the
+manifest records the size and hash of every downloaded file.
+
+The model is a 4-layer, 312-wide `BertForSequenceClassification` with
+**14,350,874 parameters**. `layers.json` records the name and shape of all
+**26 `nn.Linear` and 3 `nn.Embedding`** modules:
+
+| Module group | Count | Weight shape | Scalars |
+| --- | ---: | --- | ---: |
+| Word embeddings | 1 | 30,522 × 312 | 9,522,864 |
+| Position embeddings | 1 | 512 × 312 | 159,744 |
+| Token-type embeddings | 1 | 2 × 312 | 624 |
+| Attention query / key / value / output, per layer | 16 | 312 × 312 | 1,557,504 |
+| Intermediate, per layer | 4 | 1,200 × 312 | 1,497,600 |
+| Output, per layer | 4 | 312 × 1,200 | 1,497,600 |
+| Pooler | 1 | 312 × 312 | 97,344 |
+| Classifier | 1 | 2 × 312 | 624 |
+
+These weights total 14,333,904 scalars. The remaining parameters are 11,354
+Linear biases and 5,616 LayerNorm values. Word embeddings alone are 66% of the
+model. Which of these tensors become clustered memory cells is a later decision.
+
+### Splits
+
+GLUE's SST-2 test labels are hidden: all 1,821 are stored as -1. That split is
+therefore unused, and the roles are:
+
+| Split | Source | Examples | Negative / positive | Role |
+| --- | --- | ---: | --- | --- |
+| Selection | carved from the official train split | 5,000 | 2,211 / 2,789 | Every validation-only choice in later steps. |
+| LoRA training | rest of the official train split | 62,349 | 27,569 / 34,780 | Adapter training in later steps; not evaluated here. |
+| Test | official validation split | 872 | 428 / 444 | Reported only. Never used for any selection. |
+
+The selection split is label-proportional over the 67,349 train examples
+(29,780 negative, 37,569 positive) with largest-remainder rounding, drawn with
+seed 42 by shuffling each label's indices with one NumPy generator. Indices are
+row positions in the pinned train file, which equal its `idx` column. Both index
+lists are saved in `splits.json`; its hash is
+`f265c2d6ba992b5f0406f8a0671479dff067b1812c0f84ca4681a776310488fc`.
+
+**The model card's 88.65% was reported on this same 872-sentence official
+validation split**, which is the test split here. It is the only labelled
+held-out SST-2 data in this dataset, so it cannot also serve for selection.
+
+### Second test set: checked and not used
+
+`SetFit/sst2` distributes the original SST-2 sentence-level splits with labels.
+Its test split has 1,821 real labels (912 negative, 909 positive), and 1,731 of
+its sentences equal sentences of GLUE's hidden-label test split. The rule,
+fixed in code before any evaluation, admits it as `sst2-original-test` only if
+its labels are real and no sentence also occurs in the SST-2 train or validation
+split:
+
+| Compared with | Byte-identical strings | Equal after whitespace normalization |
+| --- | ---: | ---: |
+| SST-2 train (67,349) | 0 | **1** |
+| SST-2 validation (872) | 0 | 0 |
+
+GLUE stores sentences with a trailing space, so byte comparison finds nothing
+by construction; the meaningful comparison collapses whitespace. One test
+sentence, `what 's next ?`, is also a train-split phrase. **The overlap is not
+zero, so the set was skipped and no accuracy was measured on it.** The check
+and the matching sentence are saved in `second_test_set.json`.
+
+### Tokenization
+
+Each stored sentence is passed unmodified to the model's own tokenizer
+(`BertTokenizer`, 30,522 entries) with special tokens, truncation at
+`max_length` 128, and padding to the longest sentence in each batch. **No
+sentence is truncated: 0 of 68,221 (0.00%)** across the selection, LoRA
+training, and test splits. The longest is 66 tokens; means are 13.2
+(selection), 13.3 (training), and 25.2 (test) tokens. The train split holds
+phrases as well as sentences, which is why it is shorter.
+
+### Label mapping
+
+The mapping is **0 = negative, 1 = positive**. The model's `config.json` stores
+no `id2label`, so `transformers` reports the generic `LABEL_0` / `LABEL_1` and
+the configuration alone cannot confirm the order. It was confirmed instead by
+three recorded checks, none of which uses a test split:
+
+- the dataset's own label names are `["negative", "positive"]`;
+- selection accuracy is 95.58% with this order and 4.42% with it reversed;
+- two fixed probe sentences, one plainly negative and one plainly positive, are
+  predicted as 0 and 1.
+
+The run stops before evaluating any test set if these checks fail.
+
+### Clean measurements
+
+The downloaded checkpoint was evaluated as-is on CPU with batch size 256:
+
+| Split | Examples | Correct | Accuracy | Mean cross-entropy |
+| --- | ---: | ---: | ---: | ---: |
+| Selection | 5,000 | 4,779 | 95.58% | 0.1871 |
+| Test (official validation) | 872 | 774 | 88.76% | 0.5172 |
+
+The test result is one sentence above the model card's 773 of 872 (88.65%,
+loss 0.5142). The cause was not identified; a separate, unsaved diagnostic gave
+774 at batch sizes 1, 8, 256, and 872 and with padding to 128 tokens, so
+batching and padding do not explain it. The run took 16.2 seconds.
+
+**Selection accuracy is not a held-out measurement of this checkpoint.** Its
+publisher fine-tuned on the SST-2 train split, which contains all 5,000
+selection examples, so 95.58% is accuracy on data the model was trained on.
+The split is held out from later LoRA training only.
+
+### Evaluation function
+
+`evaluate_sequence_classifier` in `evaluation/sequence_classification.py` is a
+sibling of `evaluate_classifier` for dict-of-tensor batches. It removes the
+labels, calls `model(**batch)`, accepts either a logits tensor or an output
+with `.logits`, and returns the same four measurements with the same
+example-weighted loss and mode restoration. Labels outside the class range,
+such as GLUE's -1, raise an error instead of being scored.
+
+`evaluate_classifier` itself was not edited. Steps 4–9 record the SHA-256 of
+every file under `src/fault_lora/` and refuse to continue when a recorded file
+has changed, so all Step 10a code is in new files and every earlier source file
+is byte-identical.
+
+### Commands, files, and verification
+
+```zsh
+.venv/bin/python scripts/run_tinybert_baseline.py --config configs/tinybert_sst2.json --download
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+`--download` fetches missing pinned files; without it nothing is fetched and a
+missing file is an error. Existing run directories are never overwritten;
+choose a new `run_id`. A failed or interrupted run keeps a status record.
+
+- `src/fault_lora/models/tinybert.py`: pinned snapshot fetching, model and
+  tokenizer loading, the Linear/Embedding layout, and `load_tinybert_checkpoint`.
+- `src/fault_lora/data/sst2.py`: file reading, the proportional selection
+  split, sentence-overlap counts, batch tokenization, and truncation counts.
+- `src/fault_lora/evaluation/tinybert_baseline.py`: `TinyBertConfig`,
+  `run_tinybert_baseline`, `check_second_test`, and `verify_tinybert_baseline`.
+- `tests/test_tinybert_baseline.py`: 14 offline checks.
+
+Artifacts are in `results/tinybert-sst2-clean-seed42/` and
+`checkpoints/tinybert-sst2-clean-seed42/`:
+
+| Artifact | Purpose |
+| --- | --- |
+| `clean.pt` | Downloaded weights, model configuration, classes, tokenization, split hash, and provenance; restores without a download. SHA-256 `eace4b3b8cb22e94151b3091b9a6b216afc1443d371cb449f68ba5d512d347f6`. |
+| `metrics.json` | Selection and test counts, accuracy, cross-entropy, the model-card reference, and checkpoint/split hashes. |
+| `splits.json` | Selection and LoRA-training indices, rule, seed, and the test-split definition. |
+| `layers.json` | Name, type, and shape of every Linear and Embedding, with parameter totals. |
+| `label_mapping.json` | The mapping, the stored and resolved `id2label`, and the three checks. |
+| `truncation.json` / `preprocessing.json` | Token-length counts per split and the tokenization settings. |
+| `second_test_set.json` | The SetFit/sst2 label and overlap check and its decision. |
+| `manifest.json` | Repositories, revisions, downloaded-file sizes and hashes, split sizes and label counts, and policies. |
+| `verification.json` | Post-run re-read of the records below. |
+| Other JSON records | Configuration, environment, source-code hashes, and status. |
+
+After the run, `verify_tinybert_baseline` re-read the saved files and passed:
+the selection and training indices partition the 67,349 train rows and the
+split hash agrees across records; every downloaded file still matches its
+hash; **all 73 saved state tensors equal the downloaded `model.safetensors`
+exactly**, which is the check that no fine-tuning occurred; the recorded layout
+matches the restored model; measurement counts match the split sizes; the label
+mapping is confirmed; and source code is unchanged. The restored checkpoint
+also reproduced the original logits exactly.
+
+Dependencies: `transformers==5.19.0` and `datasets==5.1.0` were added to
+`requirements.txt`. The lockfile was regenerated from the installed
+environment with wheel hashes and now pins 64 packages (28 before), all as
+binary wheels; a `--require-hashes` resolution of the full lockfile and
+`pip check` both pass. One existing pin changed: `fsspec` 2026.9.0 became
+2026.7.0, because `datasets` 5.1.0 caps it. The full offline suite passes
+**74 tests** (60 existing, 14 new). The new tests use a tiny randomly
+initialized `BertForSequenceClassification`, a local vocabulary, and a
+hand-built local cache, and download nothing. They cover agreement with a
+direct calculation across batch sizes, mode and state preservation, tensor
+outputs and custom label keys, rejection of empty batches and hidden labels,
+padding and truncation, the split, the overlap counts, the second-test rule,
+the layout, revision and configuration validation, a complete run with its
+verification, exclusion of a leaking second test set, and stopping on a
+reversed label order or a missing file.
+
+### Limitations
+
+- This is one downloaded checkpoint. Its training recipe is known only from
+  its model card, and variability across fine-tuning seeds is not measured.
+- The only held-out measurement is 872 sentences; one sentence is 0.11
+  percentage points.
+- The train split repeats some sentences, so the index partition is not a
+  sentence partition: 59 of the 5,000 selection sentences also occur in the
+  LoRA training split. Selection results in later steps are therefore slightly
+  optimistic as estimates of held-out accuracy.
+- Changing `requirements.txt` and the lockfile changes hashes that the ResNet
+  runs recorded. Those runs live in a separate checkout and are unaffected,
+  but after a merge the ResNet LoRA runner's check of the Step 7 sweep's
+  recorded source hashes would reject the two dependency files.
+- `memory/` and `models/lora.py` were not changed in this step. Clustering
+  currently selects Conv2d/Linear weights only, so embeddings are not yet
+  eligible cells.
+
 ## Next steps: 9–10 (not implemented)
 
 9. **Controlled comparisons:** compare original, clustered, faulty, and adapted
    models, including matched adapter training on clean and zero-fault clustered
    bases. Repeat across fault patterns and training seeds, test transfer to unseen
    patterns, vary rank and placement, and record parameter, storage, and computation overhead.
-10. **Qwen extension:** reuse the validated memory/fault workflow with a language
-    model, tokenizer, text dataset, and appropriate language-model metrics.
+10. **Language-model extension:** Step 10a established the TinyBERT / SST-2
+    clean baseline. Remaining: generalize `memory/` and the LoRA code so the
+    same clustering, fault, and recovery workflow runs on both models, then
+    repeat Steps 4–9 on TinyBERT with selection on the saved selection split.
 
 Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,
