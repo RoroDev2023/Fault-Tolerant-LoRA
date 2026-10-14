@@ -35,7 +35,11 @@ at 50%. Step 10c also fixed the Part 7 fault rates with a rule that uses only
 the selection split. Step 10d added the TinyBERT LoRA recovery code and ran one
 CPU pilot on a 20% Condition B pattern. Test accuracy rose from 80.73% to 86.58%
 (`sst2-validation-872`) and from 80.33% to 87.91% (`sst2-original-test-1820`).
-The full Part 7 matrix is proposed, not run.
+Step 10e ran the full Part 7 matrix on MPS: 50 recovery runs plus the MPS
+rerun of the pilot cell, and 63 transfer evaluations. LoRA trained on a
+faulty pattern recovered most of the loss, ending 0.3–3.3 points below LoRA on
+that condition's clustered base. Clustered-trained adapters did not transfer to
+faulty patterns.
 
 ## Completed workflow
 
@@ -52,6 +56,7 @@ The full Part 7 matrix is proposed, not run.
 11. [TinyBERT clustering and fault sweep (10b)](#step-10b-tinybert-clustering-and-fault-sweep)
 12. [Harsher TinyBERT fault conditions (10c)](#step-10c-harsher-tinybert-fault-conditions)
 13. [TinyBERT LoRA recovery code and pilot (10d)](#step-10d-tinybert-lora-recovery-code-and-pilot)
+14. [TinyBERT LoRA recovery controls (10e)](#step-10e-tinybert-lora-recovery-controls)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -76,7 +81,7 @@ added only in the later steps documented below.
 | `configs/` | Baseline, fault-generation, audit, sweep, and LoRA recovery configurations. |
 | `scripts/` | Environment checks, baselines, fault generation/audits, sweeps, LoRA recovery, and the recovery matrix. |
 | `tests/` | Offline baseline, representation, and integrity checks. |
-| `docs/figures/` | Repository copies of verified Step 7, Step 8, Step 10b, and Step 10c PNG/PDF figures embedded in this README. |
+| `docs/figures/` | Repository copies of verified Step 7, Step 8, and Step 10b–10e PNG/PDF figures embedded in this README. |
 | `results/` | Generated measurements and plots; ignored by Git. |
 | `checkpoints/` | Pretrained weights, clean/decoded checkpoints, clustered encodings, sparse patterns, and adapter-only checkpoints; `hf-cache/` holds the pinned TinyBERT files; ignored by Git. |
 | `data/` | Downloaded CIFAR-10 files and, under `hf-cache/`, the pinned SST-2 files; ignored by Git. |
@@ -1729,6 +1734,12 @@ measure its cost. The full matrix below is a proposal and was not run.
 
 ### Recipe (declared before the pilot; not tuned)
 
+**Fixed parts of the TinyBERT recipe from Part 7 on:** the classifier adapter
+uses rank-4 factors with effective rank at most 2 (`CappedRankLoRALayer`), and
+the cosine learning-rate schedule steps once per optimizer step (per batch),
+not per epoch. Both were confirmed after the pilot and apply to every Part 7
+run.
+
 - **Adapters:** rank 4, alpha 4 (scale 1), on all 26 `nn.Linear` layers. A
   starts Kaiming-uniform and B starts at zero, so the initial output is zero.
   There is no adapter dropout.
@@ -1900,6 +1911,191 @@ The full offline suite passes **90 tests** (87 existing, 3 new, in
   clustered→faulty transfer reproducing the sweep record; rejection of a
   mismatched condition; and a two-run matrix with one transfer.
 
+## Step 10e: TinyBERT LoRA recovery controls
+
+**Purpose:** run the Part 7 matrix proposed in Step 10d and separate added task
+training, clustering repair, and fault repair, as the ResNet controls analysis
+does. Every number below is a test-set accuracy measured after per-run
+checkpoint selection on the selection split. The two test sets are reported
+separately and never pooled.
+
+### MPS timing check
+
+The pilot cell (Condition B, `rate07-seed1030`, training seed 42) was rerun on
+MPS as `tinybert-sst2-lora-faulty-linemb-rate07-seed1030-r4-train42-mps`. Its
+verification passed.
+
+| | CPU pilot | MPS rerun | Difference |
+| --- | ---: | ---: | ---: |
+| Epoch 1 / epoch 2 wall clock | 242.1 s / 246.5 s | **73.2 s / 65.4 s** | about 3.5× faster |
+| Before LoRA (selection / validation-872 / original-1820) | 4,357 / 704 / 1,462 | 4,357 / 704 / 1,462 | identical |
+| Selected point | 2.0 | 2.0 | same |
+| `sst2-validation-872` after | 86.58% (755) | 86.58% (755) | 0 |
+| `sst2-original-test-1820` after | 87.91% (1,600) | 88.13% (1,604) | +4 sentences, +0.22 pp |
+| Selection after (selection only) | 94.26% (4,713) | 94.38% (4,719) | +6 sentences |
+
+The faulty base evaluates identically on both devices. The trained adapters
+differ slightly because MPS and CPU arithmetic differ.
+
+### Matrix run
+
+`run_part7.sh` ran `configs/tinybert_sst2_lora_matrix_part7_proposed.json` on
+MPS. It was launched detached with `nohup caffeinate -i` in its own session,
+logged to `results/part7_matrices.log`, and recorded its PID in
+`results/part7_matrices.pid`. **All 50 runs and all 63 transfer evaluations
+completed** in 7,717 s (2 h 9 min). Runs took 137–149 s each (mean 140 s);
+epochs took 62.8–70.0 s. Every run's verification passed and every training
+loss was finite. The half-epoch mean training loss fell at every point in 47 of
+50 runs; the three exceptions are seed-44 controls whose last half-epoch rose by
+at most 0.002. Selected points: 2.0 in 31 runs, 1.5 in 14, 1.0 in 5; the
+epoch-0 adapter was never kept.
+
+The MPS rerun of the pilot fills the one cell the configuration omits, so every
+analyzed run used MPS. The CPU pilot is not part of the analysis.
+`scripts/analyze_tinybert_lora_controls.py` (configuration
+`configs/tinybert_sst2_lora_controls.json`) produced the tables below. It
+checks the declared design cell by cell and that each run is complete,
+verified, and on MPS. Each transfer must be clustered → faulty within one
+condition, and its zero-adapter base must equal the trained run's before-LoRA
+base. The analysis reproduces from the saved records, and its verification
+passed.
+
+### Definitions (as in the ResNet controls analysis)
+
+- **Variability:** mean ± sample SD. A faulty rate pools 3 patterns × 2
+  training seeds (6 runs). Clean and clustered controls pool 3 seeds.
+- **Extra-training effect:** LoRA(clean) − clean.
+- **Clustering repair:** LoRA(clustered) − clustered, per condition.
+- **Normalized recovery R:** (after − before) / (clean − before), per run.
+  A version normalized to the condition's clustered reference is also saved,
+  but it is unstable where faults barely lower accuracy. One example: Linear +
+  embeddings at 10% on `sst2-validation-872` gives 5.94 ± 7.47.
+- **Fault-specific gain:** LoRA(faulty) − mean LoRA(clustered) of the same
+  condition, per faulty run. A seed-matched version is also saved; it agrees
+  within 0.15 pp.
+- **Transfer:** a clustered-trained adapter (3 seeds) applied, without
+  training, to the same 3 faulty patterns. Transfer gain = with adapter −
+  same faulty base.
+
+### Controls
+
+| | `sst2-validation-872` | `sst2-original-test-1820` |
+| --- | ---: | ---: |
+| Clean | 88.76% | 88.35% |
+| LoRA on clean | 88.34 ± 0.35% | 88.97 ± 0.18% |
+| **Extra-training effect** | **−0.42 ± 0.35 pp** | **+0.62 ± 0.18 pp** |
+| Clustered, Linear only | 88.30% | 88.79% |
+| LoRA on clustered, Linear only (clustering repair) | 88.84 ± 0.26% (+0.54 ± 0.26) | 88.85 ± 0.33% (+0.05 ± 0.33) |
+| Clustered, Linear + embeddings | 86.24% | 87.97% |
+| LoRA on clustered, Linear + embeddings (clustering repair) | 87.84 ± 0.11% (+1.61 ± 0.11) | 88.90 ± 0.27% (+0.93 ± 0.27) |
+
+**Added task training does little for TinyBERT:** under one point, and with
+opposite signs on the two test sets. Clustering repair is small for Linear only
+and about one to one and a half points for Linear + embeddings.
+
+### Faulty bases
+
+Before = the same faulty base with the zero-output adapter; after = selected
+LoRA. Gain, R, and fault-specific gain are per run, then averaged.
+
+**`sst2-validation-872`**
+
+| Condition | Rate | Before | After LoRA | Gain (pp) | R | Fault-specific gain (pp) | Transfer accuracy | Transfer gain (pp) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Linear only | 30% | 85.78 ± 0.27 | 88.13 ± 0.38 | 2.35 ± 0.44 | 0.79 ± 0.13 | −0.71 ± 0.38 | 85.46 ± 0.66 | −0.32 ± 0.58 |
+| Linear only | 50% | 82.07 ± 2.53 | 86.96 ± 0.41 | 4.89 ± 2.47 | 0.69 ± 0.14 | −1.87 ± 0.41 | 81.47 ± 3.23 | −0.60 ± 1.22 |
+| Linear only | 75% | 81.04 ± 2.78 | 87.33 ± 0.45 | 6.29 ± 3.11 | 0.77 ± 0.16 | −1.51 ± 0.45 | 78.81 ± 3.20 | −2.23 ± 1.03 |
+| Linear only | 100% | 72.71 ± 4.36 | 86.07 ± 1.01 | 13.36 ± 3.60 | 0.83 ± 0.04 | −2.77 ± 1.01 | 70.08 ± 4.61 | −2.62 ± 1.95 |
+| Linear + emb. | 10% | 84.21 ± 1.54 | 87.14 ± 0.70 | 2.92 ± 1.16 | 0.64 ± 0.10 | −0.71 ± 0.70 | 85.16 ± 1.27 | +0.94 ± 0.69 |
+| Linear + emb. | 20% | 81.15 ± 0.36 | 87.14 ± 0.52 | 5.98 ± 0.66 | 0.79 ± 0.07 | −0.71 ± 0.52 | 82.38 ± 1.21 | +1.22 ± 0.92 |
+| Linear + emb. | 50% | 68.96 ± 5.61 | 84.50 ± 0.96 | 15.54 ± 4.77 | 0.78 ± 0.03 | −3.34 ± 0.96 | 67.35 ± 4.50 | −1.61 ± 1.49 |
+
+**`sst2-original-test-1820`**
+
+| Condition | Rate | Before | After LoRA | Gain (pp) | R | Fault-specific gain (pp) | Transfer accuracy | Transfer gain (pp) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Linear only | 30% | 85.84 ± 1.51 | 88.53 ± 0.39 | 2.69 ± 1.37 | 1.14 ± 0.26 | −0.31 ± 0.39 | 85.66 ± 1.30 | −0.18 ± 0.34 |
+| Linear only | 50% | 83.26 ± 2.33 | 87.80 ± 0.17 | 4.54 ± 2.31 | 0.86 ± 0.10 | −1.04 ± 0.17 | 81.99 ± 2.81 | −1.27 ± 1.13 |
+| Linear only | 75% | 80.22 ± 2.55 | 87.51 ± 0.38 | 7.29 ± 2.84 | 0.88 ± 0.07 | −1.34 ± 0.38 | 78.23 ± 2.93 | −1.99 ± 1.32 |
+| Linear only | 100% | 72.64 ± 6.49 | 86.22 ± 0.63 | 13.58 ± 6.43 | 0.85 ± 0.06 | −2.63 ± 0.63 | 70.10 ± 6.06 | −2.53 ± 2.17 |
+| Linear + emb. | 10% | 85.49 ± 0.20 | 88.64 ± 0.26 | 3.14 ± 0.43 | 1.10 ± 0.08 | −0.27 ± 0.26 | 86.58 ± 0.43 | +1.09 ± 0.53 |
+| Linear + emb. | 20% | 81.19 ± 0.91 | 88.22 ± 0.35 | 7.03 ± 0.90 | 0.98 ± 0.05 | −0.68 ± 0.35 | 82.99 ± 0.77 | +1.79 ± 0.69 |
+| Linear + emb. | 50% | 69.40 ± 5.86 | 86.73 ± 0.80 | 17.34 ± 5.24 | 0.92 ± 0.03 | −2.17 ± 0.80 | 68.37 ± 5.03 | −1.03 ± 1.28 |
+
+R above 1 means LoRA exceeded the clean model's accuracy on that test set.
+That happens on `sst2-original-test-1820`, where LoRA on clean is itself 0.62
+points above clean.
+
+![TinyBERT LoRA recovery controls: accuracy versus actual fault rate for each condition (rows) and test set (columns), showing faulty bases without repair, LoRA trained on each base, and clustered-trained adapters transferred to faulty patterns, with clean, clustered, and LoRA-on-clean reference lines.](docs/figures/tinybert-sst2-step10e-lora-controls.png)
+
+[Download the PDF figure](docs/figures/tinybert-sst2-step10e-lora-controls.pdf).
+Rows are conditions and columns are test sets. Orange: faulty bases without
+repair, as sweep means over five patterns; the Linear-only row shows Condition
+A's 20–100% sweep. Blue: LoRA trained on that base, with the clustered control
+at 0%. Green: clustered-trained adapters transferred without training.
+
+### What the controls show
+
+1. **Most of the gain is fault repair, not added task training.** On clean,
+   LoRA changes accuracy by −0.42 and +0.62 points. On faulty bases the gains
+   are 2.3–17.3 points, growing with damage. R falls in 0.64–1.14, so LoRA
+   closes most of the gap to the clean model on both test sets.
+2. **Recovery is incomplete, and the residual grows with the rate.** The
+   fault-specific gain is negative in every row, from −0.27 to −3.34 points.
+   LoRA on a faulty pattern ends below LoRA on the same condition's clustered
+   base, and the shortfall grows with the fault rate (about −2.6 to −3.3 points
+   at the highest rates).
+3. **The repair is pattern-specific.** A clustered-trained adapter applied to a
+   faulty pattern changes accuracy by −2.6 to +1.8 points. It helps a little
+   for Linear + embeddings at 10–20% and hurts in every other row. LoRA trained
+   on the pattern beats the transferred adapter by 2.0–18.4 points. The
+   adapters learn corrections for a particular set of corrupted cells, not
+   general robustness to clustering.
+4. **The pattern-to-pattern spread shrinks after LoRA.** At Linear-only 100%,
+   the before-LoRA SD is 4.4–6.5 points; after LoRA it is 0.6–1.0. At Linear +
+   embeddings 50%, it falls from 5.6–5.9 to 0.8–1.0.
+
+### Limitations
+
+- Three patterns per rate, two training seeds, one clean checkpoint, and one
+  clustering. The SDs describe variation over patterns × seeds, not
+  confidence intervals.
+- The selection split was part of the checkpoint's original fine-tuning data,
+  so selection accuracy is optimistic. It was used only to choose a point
+  within each run.
+- Most runs selected epoch 1.5 or 2.0, so longer training might change the
+  results. The recipe was declared in advance and not tuned.
+- The classifier adapter's effective rank is at most 2 (Step 10d). Adapters
+  are stored reliably and are not themselves faulted.
+- Training reused the full 62,349-sentence LoRA split for every run. Gains
+  include whatever that data adds, which the clean control bounds at under one
+  point here.
+
+### Commands and files
+
+```zsh
+.venv/bin/python scripts/run_tinybert_recovery.py --config configs/tinybert_sst2_lora_pilot_mps.json
+/usr/bin/python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' nohup caffeinate -i ./run_part7.sh > results/part7_matrices.log 2>&1 < /dev/null &
+echo $! > results/part7_matrices.pid
+.venv/bin/python scripts/analyze_tinybert_lora_controls.py --config configs/tinybert_sst2_lora_controls.json
+```
+
+| Path | Contents |
+| --- | --- |
+| `results/tinybert-sst2-lora-matrix-part7/` | Plan, per-run summary (JSON/CSV), `transfers.json` (63 evaluations), manifest, status. |
+| `results/tinybert-sst2-lora-*-r4-train{42,43,44}/` | Each run's configuration, history, metrics, adapter layout, plots, manifest, and verification; adapter-only checkpoints under `checkpoints/`. |
+| `results/tinybert-sst2-lora-controls/` | `analysis.json`, `conditions.csv`, PNG/PDF figure, input hashes, and verification. |
+| `src/fault_lora/evaluation/tinybert_lora_controls.py` | The analysis. It was added after the matrix finished, so no run recorded it. |
+
+The full offline suite passes **93 tests** (90 existing, 3 new, in
+`tests/test_tinybert_lora_controls.py`). The new tests check:
+
+- every definition against hand calculations;
+- rejection of missing or extra cells, incomplete transfers, and a transfer
+  whose zero-adapter base differs from the trained run's;
+- an end-to-end tiny matrix with an extra run, including refusal of a run on
+  another device.
+
 ## Next steps: 9–10 (not implemented)
 
 9. **Controlled comparisons:** compare original, clustered, faulty, and adapted
@@ -1909,8 +2105,8 @@ The full offline suite passes **90 tests** (87 existing, 3 new, in
 10. **Language-model extension:** Steps 10a–10b established the TinyBERT /
     SST-2 clean, clustered, and faulty baselines through sibling modules, and
     Step 10c added two harsher conditions. Step 10d added the recovery code,
-    one pilot, and the [proposed Part 7 matrix](#proposed-part-7-matrix-not-run).
-    Remaining: run that matrix and its transfer evaluations.
+    one pilot, and the [proposed Part 7 matrix](#proposed-part-7-matrix-not-run);
+    Step 10e ran it with its transfer evaluations and the controls analysis.
 
 Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,
