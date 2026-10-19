@@ -1,0 +1,34 @@
+{
+  "run_id": "resnet18-cifar10-codebook-finetune-k16-seed42",
+  "variants": [
+    {
+      "variant_id": "codebook-bnstats",
+      "label": "codebook+BNstats",
+      "train_batchnorm_affine": false,
+      "train_fc_bias": false
+    },
+    {
+      "variant_id": "codebook-bnaffine",
+      "label": "codebook+BNaffine",
+      "train_batchnorm_affine": true,
+      "train_fc_bias": true
+    }
+  ],
+  "source_sweep_results": "results/resnet18-cifar10-fault-sweep-seed42",
+  "source_bn_results": "results/resnet18-cifar10-bn-recalibration-seed42",
+  "expected_clean_sha256": "7a9d200cbce14c01ddadb68c3a94ce8a9a7990a4cfcdfb7d9f5ae4bdfac47439",
+  "expected_encoding_sha256": "67f9169b1d379e3b4317b72902985efcc2c849df80cd59a8bfad4b57f2793477",
+  "epochs": 5,
+  "batch_size": 128,
+  "evaluation_batch_size": 256,
+  "learning_rate": 0.0001,
+  "weight_decay": 0.0,
+  "max_grad_norm": 1.0,
+  "seed": 42,
+  "device": "mps",
+  "cpu_threads": 4,
+  "num_workers": 2,
+  "data_root": "data",
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}

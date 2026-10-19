@@ -14,7 +14,7 @@ evaluated on CIFAR-10, and their configurations, splits, preprocessing,
 checkpoints/encodings, provenance, and measured results are saved locally. The
 original clean checkpoint is preserved. A simplified adjacent-level simulator
 has saved one static 1%-probability fault pattern and its reconstructed faulty
-checkpoint. All eight full-model Step 6 audit checks and 101 unit tests pass.
+checkpoint. All eight full-model Step 6 audit checks and 109 unit tests pass.
 Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
 Step 8 trained rank-4 LoRA adapters for five epochs on one saved 1% pattern,
@@ -43,7 +43,10 @@ Step 10e ran the full Part 7 matrix on MPS: 50 recovery runs plus the MPS
 rerun of the pilot cell, and 63 transfer evaluations. LoRA trained on a
 faulty pattern recovered most of the loss, ending 0.3–3.3 points below LoRA on
 that condition's clustered base. Clustered-trained adapters did not transfer to
-faulty patterns.
+faulty patterns. Step 11a retrained only the 21 ResNet-18 codebooks, with every
+cell index fixed and BatchNorm statistics re-estimated. Clustered test accuracy
+rose from 83.29% to 91.09%, and to 91.70% when BatchNorm affine parameters and
+the classifier bias also trained. All codebooks stayed strictly increasing.
 
 ## Completed workflow
 
@@ -62,6 +65,7 @@ faulty patterns.
 13. [Harsher TinyBERT fault conditions (10c)](#step-10c-harsher-tinybert-fault-conditions)
 14. [TinyBERT LoRA recovery code and pilot (10d)](#step-10d-tinybert-lora-recovery-code-and-pilot)
 15. [TinyBERT LoRA recovery controls (10e)](#step-10e-tinybert-lora-recovery-controls)
+16. [Codebook-only retraining of the clustered ResNet-18 (11a)](#step-11a-codebook-only-retraining-of-the-clustered-resnet-18)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -2435,12 +2439,164 @@ The full offline suite passes **93 tests** (90 existing, 3 new, in
 - an end-to-end tiny matrix with an extra run, including refusal of a run on
   another device.
 
+## Step 11a: codebook-only retraining of the clustered ResNet-18
+
+**Purpose:** improve the k=16 clustered ResNet-18 without changing a single
+stored cell. Every weight keeps its cluster index; only the codebook values are
+fine-tuned, and the BatchNorm statistics are re-estimated. **No faults were
+injected in this step.**
+
+### Method
+
+- **Sources:** the Step 4 encoding (k=16, sorted codebooks, identity mapping;
+  SHA-256 `67f9169b…`) and the Step 3 clean checkpoint (`7a9d200c…`). Both
+  hashes are pinned in the configuration and checked through the audited Step 7
+  source chain.
+- **Shared weights:** each of the 21 Conv2d/Linear weights is computed as
+  `codebook[indices]` in the forward pass. Indices are a fixed `uint8` buffer;
+  the original dense weight no longer exists as a parameter. A codebook entry's
+  gradient is therefore the sum of its member weights' gradients, as in Deep
+  Compression (Han et al., 2016). The wrapped model reproduces the Step 4 logits
+  exactly before training.
+- **Variants:**
+
+  | Variant | Trainable | Parameters |
+  | --- | --- | ---: |
+  | `codebook+BNstats` (main) | the 21 codebooks only | **336** (21 × 16) |
+  | `codebook+BNaffine` (ablation) | codebooks + BatchNorm weight/bias + classifier bias | **9,946** (336 + 9,600 + 10) |
+
+  In both variants BatchNorm layers run in `train()` mode during training, so
+  their running means/variances are re-estimated for the clustered weights
+  (momentum 0.1, starting from the Step 4 statistics). Everything else stays
+  frozen and is checked for exact equality after every epoch, together with
+  every index. The codebooks, BatchNorm parameters, and biases are assumed to be
+  reliable memory.
+- **Recipe (declared before running):** Step 3 split and 96×96 preprocessing
+  with training augmentation; 5 epochs; batch 128; AdamW learning rate 1e-4,
+  weight decay 0, cosine schedule; gradient clipping 1.0; seed 42; MPS.
+  Validation ran every epoch. Epoch 0 (the Step 4 model with its original
+  BatchNorm statistics) competed. Selection used the highest validation
+  accuracy, then the lowest validation cross-entropy, keeping the earlier epoch
+  on ties. Test ran once per model, after both variants were selected and saved.
+- **Ordering check:** after selection, every codebook had to stay **strictly
+  increasing**, because a one-level fault must land on a neighboring value.
+  Codebooks are never re-sorted and indices never remapped. An order violation
+  would keep the run but save no encoding.
+
+### Measured results
+
+Both variants selected **epoch 5**. Validation correct counts by epoch (epoch 0 = 4,167):
+
+| Variant | 1 | 2 | 3 | 4 | 5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `codebook+BNstats` | 4,165 | 4,580 | 4,587 | 4,591 | 4,592 |
+| `codebook+BNaffine` | 4,586 | 4,569 | 4,621 | 4,621 | 4,626 |
+
+Paired evaluation in one run (official test 10,000 images; validation 5,000).
+The clean, clustered, and recalibrated models were re-evaluated and match their
+saved Step 3, Step 4, and Step 9b counts exactly.
+
+| Model | Validation | Test | Test correct | Test cross-entropy | Test gap to clean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Clean (Step 3) | 92.44% | 92.28% | 9,228 | 0.2299 | — |
+| Clustered (Step 4) | 83.34% | 83.29% | 8,329 | 0.5055 | 8.99 pp |
+| Clustered + BN recalibration (Step 9b) | 90.00% | 89.86% | 8,986 | 0.3043 | 2.42 pp |
+| **Retrained, `codebook+BNstats`** | 91.84% | **91.09%** | 9,109 | 0.2600 | **1.19 pp** |
+| Retrained, `codebook+BNaffine` | 92.52% | 91.70% | 9,170 | 0.2472 | 0.58 pp |
+
+Validation correct counts were 4,622, 4,167, 4,500, 4,592, and 4,626 in table
+order. On validation, the ablation is 0.08 pp *above* clean; on test it is
+0.58 pp below.
+
+- **Ordering:** all 21 codebooks of both selected models stayed strictly
+  increasing. The smallest adjacent gap fell from 0.00374 (Step 4) to 0.00293
+  (main) and 0.00309 (ablation). Every epoch's codebooks were also strictly
+  increasing.
+- **Size of the change:** relative weight-space change per tensor was 2.6–9.1%
+  (main) and 2.1–7.1% (ablation). The classifier `fc.weight` changed most in
+  both. The largest single codebook value change was 0.0331 (main) and 0.0258
+  (ablation). Per-tensor before/after codebooks are in
+  `codebook_changes_<variant>.json`.
+
+### Saved encodings
+
+Each selected model is saved in the Step 4 encoding format with identical
+`indices`, `index_to_level`, and `level_to_index` for all 21 tensors, verified
+bit for bit. Only the retrained codebooks and the new untouched state differ:
+
+- **Main:** 60 BatchNorm buffers changed: running means, running variances, and
+  counters.
+- **Ablation:** also the BatchNorm affine parameters and the classifier bias.
+
+A dense reconstruction is saved next to each encoding. `decode_state` of each
+saved encoding equals the selected model's effective weights exactly.
+
+| Variant | Encoding fingerprint | `encoding.pt` SHA-256 |
+| --- | --- | --- |
+| `codebook+BNstats` | `18e55d67952361ebb6c47a4dc29887d17df2f367e2cf3fc22c116b72b9075220` | `e3e9248b…` |
+| `codebook+BNaffine` | `e088d98014a97c630f99bbee2d93a4766087955506a5ac0393e042ddd8c6f0ce` | `5bcc762a…` |
+
+The fingerprints differ from Step 4, so saved Step 7 patterns cannot be
+applied to these encodings. They must be regenerated against them; since the
+indices are unchanged, the same seeds should give identical positions and
+levels (Step 11b).
+
+### Commands and files
+
+```zsh
+.venv/bin/python scripts/run_codebook_finetune.py --config configs/resnet18_cifar10_codebook_finetune.json
+```
+
+The run took 618 s on MPS, including both trainings and the paired evaluation.
+
+- `src/fault_lora/training/codebook_finetune.py`: the shared-weight layer,
+  trainable-set control, frozen-state checks, ordering check, encoding
+  construction, paired evaluation, and post-run verification. This is a new
+  file; no previously hash-recorded file changed, so no new accepted-change
+  entry was needed.
+- `tests/test_codebook_finetune.py`: eight offline checks:
+  - indices and frozen state never change;
+  - gradients reach only the declared parameters;
+  - each codebook gradient equals the summed member-weight gradient;
+  - the saved encoding reconstructs the trained weights exactly with identical
+    cells;
+  - an order violation is detected and blocks the encoding;
+  - invalid configurations are rejected;
+  - a full patched run;
+  - an order-violation run that saves no encoding.
+
+| Artifact | Purpose |
+| --- | --- |
+| `results/resnet18-cifar10-codebook-finetune-k16-seed42/` | Configuration, sources, environment, per-variant histories, trainable counts, ordering report, codebook changes, encodings record, paired evaluation (JSON/CSV), manifest, verification. |
+| `checkpoints/…/<variant>/encoding.pt`, `dense.pt` | New encodings and their dense reconstructions. |
+| `checkpoints/…/<variant>/best.pt`, `last.pt` | Selected and final codebooks plus BatchNorm state. |
+
+The full offline suite passes **109 tests**.
+
+### Limitations
+
+- **One run:** one seed and one recipe; no learning-rate or epoch study.
+- **Epoch 1 of the main variant:** validation dropped slightly (4,165 vs 4,167)
+  before improving.
+- **Selection at the last epoch:** both variants selected epoch 5, so longer
+  training might help further. This was not tested.
+- **Reliable memory assumed:** codebooks, BatchNorm parameters, and biases are
+  assumed reliable; the ablation also enlarges that reliable state to 9,946
+  values.
+- **No fault robustness measured:** fault behavior of the retrained encodings
+  is not measured yet (Step 11b).
+- **Nondeterminism:** codebook gradients are scatter-add sums whose
+  floating-point order is not guaranteed to be identical across runs on MPS.
+
 ## Next steps
 
 9. **Remaining ResNet-18 comparisons:** Step 9b covered matched clean and
    clustered bases, repeated patterns and seeds, and BatchNorm recalibration.
    Still open for ResNet-18: transfer to unseen patterns, rank and placement,
    combining BatchNorm recalibration with LoRA, and computation/storage overhead.
+   Step 11b: regenerate the Step 7 fault patterns against the retrained Step 11a
+   encodings with the same seeds, verify that positions and levels are
+   identical, and measure their fault behavior.
 10. **Language-model extension:** Steps 10a–10b established the TinyBERT /
     SST-2 clean, clustered, and faulty baselines through sibling modules, and
     Step 10c added two harsher conditions. Step 10d added the recovery code,
