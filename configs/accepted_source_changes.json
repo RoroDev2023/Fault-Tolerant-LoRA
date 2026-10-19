@@ -26,8 +26,8 @@
   {
     "path": "src/fault_lora/training/recovery.py",
     "old_sha256": "6fb75fc3d93e2056b3f91479d29f55289696cc1ae642171e893b90fbd4cd645e",
-    "new_sha256": "d14c2184acfba5ddbdda676b481829ea9985b846a6e26fd7f9af7c0db04d126a",
-    "reason": "Verification-path change for the dependency-hash fix (2026-10-18): prepare_sources, run_recovery, load_recovered_model and evaluate_adapter_on_base now compare recorded hashes through the shared rule and report accepted changes. No change to training, evaluation, or result computation. Recorded by 42 re-verified record(s).",
+    "new_sha256": "21c70064173763b0cbaf34623fe737f64335fe2e9c176bf5928dda12d094782d",
+    "reason": "Verification-path change for the dependency-hash fix (2026-10-18): prepare_sources, run_recovery, load_recovered_model and evaluate_adapter_on_base now compare recorded hashes through the shared rule and report accepted changes. No change to training, evaluation, or result computation. Recorded by 42 re-verified record(s). Updated 2026-10-19 (Step 11c): recovery.py also gained base kinds retrained-clustered and retrained-faulty; prepare_sources and build_base_state dispatch them to training/retrained_bases.py, and run_recovery's labels and fault_counts condition cover them. Existing base kinds behave exactly as before.",
     "date": "2026-10-18",
     "commit": "159ec94"
   },
@@ -46,5 +46,13 @@
     "reason": "Verification-path change for the dependency-hash fix (2026-10-18): verify_run and verify_matrix now compare recorded hashes through the shared rule and report accepted changes. No change to training, evaluation, or result computation. Recorded by 36 re-verified record(s).",
     "date": "2026-10-18",
     "commit": "7bd3d9d"
+  },
+  {
+    "path": "src/fault_lora/training/recovery.py",
+    "old_sha256": "d14c2184acfba5ddbdda676b481829ea9985b846a6e26fd7f9af7c0db04d126a",
+    "new_sha256": "21c70064173763b0cbaf34623fe737f64335fe2e9c176bf5928dda12d094782d",
+    "reason": "Step 11c verification-preserving extension: base kinds retrained-clustered and retrained-faulty are dispatched to training/retrained_bases.py; labels and the fault_counts condition cover them. Existing base kinds behave exactly as before. This version (with the shared hash rule) was recorded by the Step 11a, Step 11b, and dependency-regression records.",
+    "date": "2026-10-19",
+    "commit": "9fcd59a"
   }
 ]

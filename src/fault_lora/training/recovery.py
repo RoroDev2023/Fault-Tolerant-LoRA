@@ -33,8 +33,9 @@ from fault_lora.models.resnet import build_resnet18
 from fault_lora.training.baseline import choose_device, seed_worker
 
 
-BASE_KINDS = ("clean", "clustered", "faulty")
-BASE_LABELS = {"clean": "Clean base", "clustered": "Clustered base", "faulty": "Faulty base"}
+BASE_KINDS = ("clean", "clustered", "faulty", "retrained-clustered", "retrained-faulty")
+PATTERN_KINDS = ("faulty", "retrained-faulty")
+BASE_LABELS = {"clean": "Clean base", "clustered": "Clustered base", "faulty": "Faulty base", "retrained-clustered": "Retrained clustered base", "retrained-faulty": "Retrained faulty base"}
 
 
 @dataclass
@@ -67,9 +68,9 @@ class RecoveryConfig:
         validate_parameters(0, self.seed)
         if self.base_kind not in BASE_KINDS:
             raise ValueError(f"base_kind must be one of {BASE_KINDS}")
-        if (self.pattern_id is not None) != (self.base_kind == "faulty"):
+        if (self.pattern_id is not None) != (self.base_kind in PATTERN_KINDS):
             raise ValueError("pattern_id is required for a faulty base and must be null otherwise")
-        for name in ("run_id", "pattern_id") if self.base_kind == "faulty" else ("run_id",):
+        for name in ("run_id", "pattern_id") if self.base_kind in PATTERN_KINDS else ("run_id",):
             if not isinstance(getattr(self, name), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", getattr(self, name)):
                 raise ValueError(f"{name} must be a simple name")
         if self.clean_checkpoint_sha256 is not None and (not isinstance(self.clean_checkpoint_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.clean_checkpoint_sha256)):
@@ -94,7 +95,11 @@ def prepare_sources(root, config):
 
     The record holds the base's previously measured Step 7 validation/test results:
     the selected pattern for a faulty base, the replayed references otherwise.
+    Retrained base kinds (Step 11c) are prepared from the Step 11b sweep instead.
     """
+    if config.base_kind.startswith("retrained-"):
+        from fault_lora.training.retrained_bases import prepare_retrained_sources
+        return prepare_retrained_sources(root, config)
     directory = root / config.source_sweep_results
     require(json.loads((directory / "status.json").read_text())["status"] == "complete", "Source sweep is incomplete")
     sweep_config = SweepConfig(**json.loads((directory / "config.json").read_text()))
@@ -149,8 +154,12 @@ def build_base_state(config, encoding, paths):
 
     clean: the Step 3 validation-selected checkpoint the encoding was clustered from.
     clustered: the decoded Step 4 encoding with no faults. faulty: the same encoding
-    read through the saved static pattern, exactly as in Step 8.
+    read through the saved static pattern, exactly as in Step 8. Retrained kinds
+    use the Step 11a encoding and Step 11b patterns.
     """
+    if config.base_kind.startswith("retrained-"):
+        from fault_lora.training.retrained_bases import build_retrained_state
+        return build_retrained_state(config, encoding, paths)
     if config.base_kind == "clean":
         state = torch.load(paths["clean"], map_location="cpu", weights_only=True)["model_state_dict"]
         require(set(state) == set(encoding["clustered_tensors"]) | set(encoding["untouched_state"]), "Clean checkpoint and encoding describe different tensors")
@@ -292,7 +301,7 @@ def plot_recovery(history, metrics, references, output_dir):
             label = BASE_LABELS[metrics["base_kind"]]
             bars = axes[1].bar([label, f"{label} + LoRA"], test_values, width=.55, color=["#a76a2d", "#174c78"])
             axes[1].bar_label(bars, fmt="%.2f%%", padding=4)
-            axes[1].set_title("Test: same saved pattern before / after" if metrics["base_kind"] == "faulty" else "Test: same frozen base before / after")
+            axes[1].set_title("Test: same saved pattern before / after" if metrics["pattern_id"] is not None else "Test: same frozen base before / after")
             for axis, split in zip(axes, ("validation", "test")):
                 axis.axhline(100 * references[split]["clean"]["accuracy"], linestyle="--", color="#26734d", label="Original clean reference")
                 axis.axhline(100 * references[split]["clustered_no_faults"]["accuracy"], linestyle=":", color="#a76a2d", label="Clustered zero-fault reference")
@@ -303,7 +312,7 @@ def plot_recovery(history, metrics, references, output_dir):
                 axis.legend(loc="lower left", fontsize=8)
             config = metrics["config"]
             fig.suptitle(f"ResNet-18 / CIFAR-10: rank-{config['rank']} LoRA recovery, {metrics['pattern_id'] or metrics['base_kind'] + ' base'}")
-            fig.text(.5, .02, f"One {'static pattern' if metrics['base_kind'] == 'faulty' else 'frozen base'} and one training seed; no uncertainty estimate. Base parameters and BatchNorm buffers fixed.", ha="center", fontsize=8)
+            fig.text(.5, .02, f"One {'static pattern' if metrics['pattern_id'] is not None else 'frozen base'} and one training seed; no uncertainty estimate. Base parameters and BatchNorm buffers fixed.", ha="center", fontsize=8)
             fig.tight_layout(rect=(0, .055, 1, .94))
             paths = [Path(output_dir) / f"lora_recovery.{extension}" for extension in ("png", "pdf")]
             for path in paths:
@@ -347,7 +356,7 @@ def run_recovery(config, project_root):
         write_json(results_dir / "source_sha256.json", source_code)
         write_json(results_dir / "splits.json", split)
         write_json(results_dir / "preprocessing.json", metadata["preprocessing"])
-        if config.base_kind == "faulty":
+        if config.pattern_id is not None:
             write_json(results_dir / "fault_counts.json", record["counts"])
         environment = {"python": platform.python_version(), "platform": platform.platform(), "device": str(device), "cpu_threads": config.cpu_threads,
                        "packages": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "numpy", "matplotlib")},
@@ -456,8 +465,10 @@ def run_recovery(config, project_root):
         figures = plot_recovery(history, metrics, references, results_dir)
         manifest = {**checkpoint_metadata, "environment": environment, "selection_rule": "Highest validation accuracy, then lowest validation loss; exact ties retain earlier epoch. Includes epoch-zero adapters.",
                     "base_selection": {"clean": "Step 3 validation-selected clean checkpoint; no clustering or faults.", "clustered": "Decoded Step 4 encoding with zero faults.",
-                                       "faulty": "Step 4 encoding read through the configured saved static pattern."}[config.base_kind],
-                    "pattern_selection": "Configured saved pattern; initial default is first ordinal at p=0.01, not selected by its score." if config.base_kind == "faulty" else "No fault pattern; pattern_id is null.",
+                                       "faulty": "Step 4 encoding read through the configured saved static pattern.",
+                                       "retrained-clustered": "Step 11a codebook-retrained encoding with zero faults.",
+                                       "retrained-faulty": "Step 11a codebook-retrained encoding read through the configured Step 11b static pattern."}[config.base_kind],
+                    "pattern_selection": "Configured saved pattern; initial default is first ordinal at p=0.01, not selected by its score." if config.pattern_id is not None else "No fault pattern; pattern_id is null.",
                     "test_policy": "Same fixed base before/after; each model evaluated once on official test after validation-only checkpoint selection.",
                     "frozen_state": "All base weights, biases, BatchNorm affine parameters, running statistics and counters unchanged. Model stays in eval mode with adapter gradients enabled.",
                     "adapter_storage": "Reliable float32 adapter storage, unmerged residual branches; no adapter faults injected; byte estimate excludes optimizer and archive overhead.",

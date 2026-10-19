@@ -1,0 +1,37 @@
+{
+  "run_id": "resnet18-cifar10-retrained-lora-controls",
+  "source_matrices": [
+    "results/resnet18-cifar10-lora-retrained-controls",
+    "results/resnet18-cifar10-lora-retrained-p001",
+    "results/resnet18-cifar10-lora-retrained-p005",
+    "results/resnet18-cifar10-lora-retrained-p010",
+    "results/resnet18-cifar10-lora-retrained-p020"
+  ],
+  "clean_control_matrix": "results/resnet18-cifar10-lora-controls-matrix",
+  "clean_control_run_ids": [
+    "resnet18-cifar10-lora-clean-none-r4-train42",
+    "resnet18-cifar10-lora-clean-none-r4-train43",
+    "resnet18-cifar10-lora-clean-none-r4-train44"
+  ],
+  "source_bn_results": "results/resnet18-cifar10-retrained-bn-recalibration-seed42",
+  "retrained_sweep_results": "results/resnet18-cifar10-retrained-fault-sweep-seed42",
+  "step9b_analysis_results": "results/resnet18-cifar10-lora-controls",
+  "fault_probabilities": [
+    0.01,
+    0.05,
+    0.1,
+    0.2
+  ],
+  "control_seeds": [
+    42,
+    43,
+    44
+  ],
+  "faulty_seeds": [
+    42,
+    43
+  ],
+  "rank": 4,
+  "alpha": 4.0,
+  "results_root": "results"
+}
