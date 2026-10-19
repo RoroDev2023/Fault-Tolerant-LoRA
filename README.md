@@ -14,7 +14,7 @@ evaluated on CIFAR-10, and their configurations, splits, preprocessing,
 checkpoints/encodings, provenance, and measured results are saved locally. The
 original clean checkpoint is preserved. A simplified adjacent-level simulator
 has saved one static 1%-probability fault pattern and its reconstructed faulty
-checkpoint. All eight full-model Step 6 audit checks and 116 unit tests pass.
+checkpoint. All eight full-model Step 6 audit checks and 122 unit tests pass.
 Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
 Step 8 trained rank-4 LoRA adapters for five epochs on one saved 1% pattern,
@@ -51,7 +51,10 @@ Step 11b applied identical faults to the Step 4 and retrained encodings. The
 retrained model starts 7.8 pp higher, and at 1% its damage falls from 2.76 to
 0.71 pp. From 5% upward, however, the damage is about the same (5.52 vs
 5.29 pp at 5%; 19.22 vs 18.88 pp at 10%). At 30–50% the retrained model is
-damaged more.
+damaged more. Step 11c repeated the LoRA controls on the retrained baseline (43
+runs). LoRA on a faulty base reached 92.32%, 92.26%, 92.11%, and 91.72% test
+accuracy at 1%, 5%, 10%, and 20%, against 92.49% for LoRA on the retrained
+zero-fault base. The fault-specific gap was −0.18, −0.24, −0.38, and −0.78 pp.
 
 ## Completed workflow
 
@@ -72,6 +75,7 @@ damaged more.
 15. [TinyBERT LoRA recovery controls (10e)](#step-10e-tinybert-lora-recovery-controls)
 16. [Codebook-only retraining of the clustered ResNet-18 (11a)](#step-11a-codebook-only-retraining-of-the-clustered-resnet-18)
 17. [Fault sweep on the retrained baseline (11b)](#step-11b-fault-sweep-on-the-retrained-baseline)
+18. [LoRA controls on the retrained baseline (11c)](#step-11c-lora-controls-on-the-retrained-baseline)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -2738,14 +2742,176 @@ The full offline suite passes **116 tests**.
 - **Reliable memory:** codebooks, BatchNorm state, and biases are treated as
   reliable.
 
+## Step 11c: LoRA controls on the retrained baseline
+
+**Purpose:** repeat the Step 9b controls on the codebook-retrained baseline
+(Step 11a `codebook+BNstats`). Clustering loss is now largely removed before any
+fault, so LoRA(faulty) − LoRA(retrained clustered) measures fault repair alone.
+
+![No repair, BatchNorm recalibration, and LoRA test accuracy versus requested fault probability, for the Step 4 clustered baseline (left) and the retrained baseline (right), with clean, LoRA-on-clean, and LoRA-on-clustered reference lines.](docs/figures/resnet18-cifar10-step11c-retrained-lora-controls.png)
+
+[Download the PDF figure](docs/figures/resnet18-cifar10-step11c-retrained-lora-controls.pdf).
+The left panel shows the Step 4 baseline, from Steps 7, 9b, and 11b; the right
+panel shows the retrained baseline, from Steps 11b and 11c. On the Step 4
+baseline, LoRA and BatchNorm recalibration were run only up to 10%.
+
+### Method
+
+- **Base kinds.** The recovery runner gained two base kinds,
+  `retrained-clustered` and `retrained-faulty`. `recovery.py` only dispatches
+  them to the new `training/retrained_bases.py`. That module verifies the Step
+  11b sweep, the Step 11b audit, the pinned Step 11a encoding, and each Step 11b
+  retrained-bound pattern before use. For these kinds, the existing
+  `source_sweep_results` / `source_audit_results` fields name the Step 11b sweep
+  and audit. No configuration field was added, so every saved run's
+  configuration still verifies.
+- **Decision file.** `recovery.py`'s hash was recorded by earlier runs, so its
+  entries in `configs/accepted_source_changes.json` were updated with this
+  reason. The versions recorded by the Step 9b runs and by the Step 9a–11b
+  records now point to the new file. A new test fails whenever any listed entry
+  no longer matches the current file.
+- **Recipe:** exactly Step 9b's: rank 4, alpha 4, all 21 layers, 5 epochs,
+  batch 128, AdamW 1e-3, weight decay 1e-4, cosine schedule, gradient clipping
+  1.0. Base state and BatchNorm were frozen in eval mode and checked every
+  epoch. Selection used validation only, with epoch 0 competing. Device: MPS.
+- **Matrix, declared before running (43 runs):**
+  - retrained-clustered × seeds 42, 43, 44;
+  - retrained-faulty at 1%, 5%, 10%, and 20% × all 5 Step 11b patterns
+    (`rate03`, `rate05`, `rate06`, `rate07`) × seeds 42, 43.
+
+  The runs were split into five matrices and launched detached by
+  `run_step11c.sh`.
+- **Extra-training control:** the three Step 9b clean-base runs (seeds 42–44).
+  The clean base is unchanged, so they were reused and re-verified rather than
+  rerun.
+- **BatchNorm recalibration:** the Step 9b method (5,000 seeded training images,
+  20 batches of 250, labels dropped, `momentum=None`) on the retrained encoding
+  at 0% and on all 20 faulty patterns.
+- **Analysis:** the Step 9b formulas, unchanged, applied to the retrained runs,
+  plus a side-by-side table with the saved Step 9b analysis. "No repair" is the
+  Step 11b retrained measurement.
+
+### Measured results (official test set)
+
+Two columns need a note:
+
+- **Before LoRA:** mean ± SD over all runs; at a fault rate, each pattern counts
+  twice. Step 11b's pattern-level SDs are 0.14, 1.16, 7.20, and 8.70 pp.
+- **R (normalized recovery)** = (after − before) / (92.28% − before).
+
+| Base | Runs | Before LoRA | After LoRA | Gain (pp) | R |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Clean (Step 9b runs, reused) | 3 | 92.28% | 92.75% ± 0.11 | +0.47 ± 0.11 | — |
+| Retrained clustered | 3 | 91.09% | 92.49% ± 0.22 | +1.40 ± 0.22 | 1.179 ± 0.185 |
+| Retrained, 1% | 10 | 90.38% | 92.32% ± 0.23 | +1.94 ± 0.21 | 1.023 ± 0.114 |
+| Retrained, 5% | 10 | 85.80% | 92.26% ± 0.19 | +6.46 ± 1.01 | 0.998 ± 0.029 |
+| Retrained, 10% | 10 | 72.21% | 92.11% ± 0.14 | +19.90 ± 6.74 | 0.991 ± 0.007 |
+| Retrained, 20% | 10 | 60.07% | 91.72% ± 0.23 | +31.65 ± 8.34 | 0.980 ± 0.011 |
+
+R above 1 means the adapted model passed the clean reference. Near 0–1% the
+denominator is small (1.2–1.9 pp), so R is noisy there.
+
+**Fault-specific gain: LoRA(faulty) − LoRA(retrained clustered)**, in pp, against
+the mean over three seeds:
+
+| Rate | Gain | Seed-matched | Range over runs |
+| ---: | ---: | ---: | ---: |
+| 1% | −0.18 ± 0.23 | −0.17 ± 0.23 | −0.70 to +0.11 |
+| 5% | −0.24 ± 0.19 | −0.23 ± 0.26 | −0.54 to +0.13 |
+| 10% | −0.38 ± 0.14 | −0.38 ± 0.21 | −0.61 to −0.11 |
+| 20% | −0.78 ± 0.23 | −0.77 ± 0.26 | −1.18 to −0.48 |
+
+**No repair vs BatchNorm recalibration vs LoRA.** No-repair, recalibration, and
+LoRA-minus-recalibration SDs are across patterns:
+
+| Condition | No repair | BN recalibration | LoRA | LoRA − BN recal. (pp) | R, BN recal. |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Retrained clustered | 91.09% | 90.72% | 92.49% | +1.77 | −0.311 |
+| 1% | 90.38 ± 0.14 | 90.46 ± 0.14 | 92.32 | +1.86 ± 0.26 | 0.035 ± 0.111 |
+| 5% | 85.80 ± 1.16 | 89.66 ± 0.16 | 92.26 | +2.60 ± 0.20 | 0.584 ± 0.076 |
+| 10% | 72.21 ± 7.20 | 88.27 ± 0.44 | 92.11 | +3.84 ± 0.40 | 0.787 ± 0.052 |
+| 20% | 60.07 ± 8.70 | 87.19 ± 0.80 | 91.72 | +4.53 ± 0.85 | 0.832 ± 0.057 |
+
+**Side by side with Step 9b (Step 4 baseline), test accuracy:**
+
+| Rate | Step 4: none / BN recal. / LoRA | Retrained: none / BN recal. / LoRA | Fault-specific gain, Step 4 → retrained |
+| ---: | --- | --- | --- |
+| 0% | 83.29 / 89.86 / 92.44 | 91.09 / 90.72 / 92.49 | — |
+| 1% | 80.53 / 89.42 / 92.31 | 90.38 / 90.46 / 92.32 | −0.13 → −0.18 pp |
+| 5% | 77.77 / 89.09 / 92.27 | 85.80 / 89.66 / 92.26 | −0.17 → −0.24 pp |
+| 10% | 64.07 / 87.43 / 92.13 | 72.21 / 88.27 / 92.11 | −0.31 → −0.38 pp |
+| 20% | 50.50 / — / — | 60.07 / 87.19 / 91.72 | — → −0.78 pp |
+
+Validation shows the same picture. Fault-specific gain there was +0.04, −0.19,
+−0.28, and −0.64 pp at 1, 5, 10, and 20%. All values for both splits are in
+`analysis.json` and `side_by_side.csv`.
+
+**Interpretation, limited to these measurements:**
+
+- **LoRA's endpoint barely depends on the baseline.** After LoRA, accuracy on
+  the Step 4 and retrained bases agrees within 0.05 pp at every shared rate.
+  Retraining moved the starting point, not where LoRA ends.
+- **Fault repair is now measured directly.** LoRA recovers almost all of the
+  fault damage, but a residual remains and grows with the fault rate: about
+  0.2 pp at 1–5%, 0.4 pp at 10%, and 0.8 pp at 20%. All 10 runs at 10% and at
+  20% ended below LoRA(retrained clustered).
+- **The extra-training effect is unchanged:** +0.47 pp on the clean base.
+  LoRA(retrained clustered) at 92.49% sits between clean (92.28%) and
+  LoRA(clean) (92.75%).
+- **BatchNorm recalibration slightly hurts the zero-fault retrained base**
+  (91.09% → 90.72%) and barely helps at 1%. Step 11a already re-estimated those
+  statistics during training with augmented inputs. From 5% upward it still
+  helps substantially, but LoRA adds 2.6–4.5 pp beyond it.
+
+### Run history and provenance
+
+- **Timing:** BatchNorm recalibration took 5 min; the five matrices took
+  3 h 39 min (02:56–06:35 UTC); each run took 265–281 s.
+- **Verification:**
+  - all matrices, the BatchNorm run, and the analysis passed;
+  - the analysis re-verified 46 runs: the 43 new runs and the 3 reused clean
+    runs.
+- **Selected epochs:** epoch 5 in 37 runs, epoch 4 in 5, and epoch 3 in 1
+  (`retrained-faulty-rate03-seed52-train42`). No run selected epoch 0.
+- **Accepted source changes:** the analysis's
+  `accepted_source_hash_changes` lists the two dependency files and the four
+  recorded Python files, all through the committed decision files.
+
+```zsh
+nohup caffeinate -i ./run_step11c.sh > results/step11c_runs.log 2>&1 &   # BN recalibration + five matrices
+.venv/bin/python scripts/analyze_retrained_lora_controls.py --config configs/resnet18_cifar10_retrained_lora_controls.json
+```
+
+| Artifact | Purpose |
+| --- | --- |
+| `results/resnet18-cifar10-lora-retrained-{controls,p001,p005,p010,p020}/` | Matrix plans, summaries, verification; per-run directories `resnet18-cifar10-lora-retrained-*`. |
+| `results/resnet18-cifar10-retrained-bn-recalibration-seed42/` | BatchNorm recalibration records, aggregate, and verification. |
+| `results/resnet18-cifar10-retrained-lora-controls/` | `analysis.json`, `conditions.csv`, `side_by_side.csv`, figure, manifest, and verification. |
+| `src/fault_lora/training/retrained_bases.py`, `evaluation/retrained_lora_controls.py` | Retrained base kinds and the Step 11c analysis. |
+| `tests/test_retrained_recovery.py` | Six offline checks: base-kind rules; sources and states; rejected patterns; an end-to-end retrained matrix with adapter reload; that the analysis reproduces the Step 9b formulas exactly on the same numbers; and decision-file currency. |
+
+The full offline suite passes **122 tests**.
+
+### Limitations
+
+- **Sample sizes:** two training seeds per pattern, five patterns per rate, and
+  one Step 11a retraining seed.
+- **One recipe:** rank 4 on all layers; the residual might change with rank or
+  placement.
+- **Transfer not tested:** each adapter is trained and tested on its own fixed
+  pattern; transfer across patterns was not evaluated.
+- **BatchNorm recalibration settings:** recalibration used the Step 9b settings,
+  which are not tuned for an already re-estimated baseline.
+
 ## Next steps
 
 9. **Remaining ResNet-18 comparisons:** Step 9b covered matched clean and
    clustered bases, repeated patterns and seeds, and BatchNorm recalibration.
    Still open for ResNet-18: transfer to unseen patterns, rank and placement,
    combining BatchNorm recalibration with LoRA, and computation/storage overhead.
-   Step 11b measured fault behavior of the retrained baseline. Still open: LoRA
-   recovery on the retrained baseline, and why it is damaged more at 30–50%.
+   Step 11b measured fault behavior of the retrained baseline and Step 11c ran
+   the LoRA controls on it. Still open: why the retrained baseline is damaged
+   more at 30–50%, LoRA at those rates, and transfer across patterns.
 10. **Language-model extension:** Steps 10a–10b established the TinyBERT /
     SST-2 clean, clustered, and faulty baselines through sibling modules, and
     Step 10c added two harsher conditions. Step 10d added the recovery code,
