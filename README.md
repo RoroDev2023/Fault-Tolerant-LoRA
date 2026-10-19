@@ -14,7 +14,7 @@ evaluated on CIFAR-10, and their configurations, splits, preprocessing,
 checkpoints/encodings, provenance, and measured results are saved locally. The
 original clean checkpoint is preserved. A simplified adjacent-level simulator
 has saved one static 1%-probability fault pattern and its reconstructed faulty
-checkpoint. All eight full-model Step 6 audit checks and 109 unit tests pass.
+checkpoint. All eight full-model Step 6 audit checks and 116 unit tests pass.
 Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
 Step 8 trained rank-4 LoRA adapters for five epochs on one saved 1% pattern,
@@ -47,6 +47,11 @@ faulty patterns. Step 11a retrained only the 21 ResNet-18 codebooks, with every
 cell index fixed and BatchNorm statistics re-estimated. Clustered test accuracy
 rose from 83.29% to 91.09%, and to 91.70% when BatchNorm affine parameters and
 the classifier bias also trained. All codebooks stayed strictly increasing.
+Step 11b applied identical faults to the Step 4 and retrained encodings. The
+retrained model starts 7.8 pp higher, and at 1% its damage falls from 2.76 to
+0.71 pp. From 5% upward, however, the damage is about the same (5.52 vs
+5.29 pp at 5%; 19.22 vs 18.88 pp at 10%). At 30–50% the retrained model is
+damaged more.
 
 ## Completed workflow
 
@@ -66,6 +71,7 @@ the classifier bias also trained. All codebooks stayed strictly increasing.
 14. [TinyBERT LoRA recovery code and pilot (10d)](#step-10d-tinybert-lora-recovery-code-and-pilot)
 15. [TinyBERT LoRA recovery controls (10e)](#step-10e-tinybert-lora-recovery-controls)
 16. [Codebook-only retraining of the clustered ResNet-18 (11a)](#step-11a-codebook-only-retraining-of-the-clustered-resnet-18)
+17. [Fault sweep on the retrained baseline (11b)](#step-11b-fault-sweep-on-the-retrained-baseline)
 
 ## Step 1: Repository scaffold and Python environment
 
@@ -2588,15 +2594,158 @@ The full offline suite passes **109 tests**.
 - **Nondeterminism:** codebook gradients are scatter-add sums whose
   floating-point order is not guaranteed to be identical across runs on MPS.
 
+## Step 11b: fault sweep on the retrained baseline
+
+**Purpose:** find out how much of Step 7's fault damage came from the stale
+clustered baseline. The Step 11a `codebook+BNstats` encoding (fingerprint
+`18e55d67…`) is the new baseline; `codebook+BNaffine` is an ablation only. **No
+LoRA was trained.**
+
+![Test accuracy versus actual fault rate for the Step 4 clustered baseline, the codebook-retrained baseline, and the BNaffine ablation under identical faults, from 0 to 50 percent and zoomed to 0 to 10 percent.](docs/figures/resnet18-cifar10-step11b-retrained-fault-sweep.png)
+
+[Download the PDF figure](docs/figures/resnet18-cifar10-step11b-retrained-fault-sweep.pdf).
+Points and bars are mean ± 1 sample SD over 5 patterns per nonzero rate.
+Dotted lines mark each encoding's zero-fault accuracy.
+
+### Method
+
+1. **Regenerated patterns.** For all 31 Step 7 patterns (same IDs, seeds 42–71,
+   probabilities 0–10%), a pattern was generated against the retrained encoding
+   with the same seed and probability. Positions, before-levels, and
+   after-levels were compared tensor by tensor with the saved Step 7 pattern.
+   **All 31 were identical**, as expected, since Step 11a left every index
+   unchanged.
+2. **Higher rates, declared before running:** 20%, 30%, and 50%, 5 patterns
+   each, with new seeds 72–86 in ascending rate order (`rate07`–`rate09`). Each
+   was generated against the retrained encoding and required to match the same
+   seed regenerated against the Step 4 encoding. **All 15 were identical.**
+   Patterns at the ablation's rates were also matched against the ablation
+   encoding, and every one was identical.
+3. **All 46 identity checks finished before any evaluation.** A difference would
+   have stopped the run without evaluating anything.
+4. **Audit.** The eight Step 6 checks were run on the retrained encoding
+   (`results/resnet18-cifar10-retrained-fault-checks-seed42/`). **All passed.**
+   The audit's saved p=0.01, seed-42 pattern has exactly Step 5's cells: 111,858
+   corrupted, each changing a weight. Seed 43 selected 111,848. The all-cell
+   check corrupted all 11,172,032 cells, with 28,240 lower-boundary and 9,778
+   upper-boundary transitions, matching Step 6.
+5. **Evaluation.** Every pattern was evaluated on validation and test. Step 7's
+   saved patterns were applied to the Step 4 baseline, and its re-evaluation
+   matched every Step 7 count exactly. Saved retrained-bound patterns were
+   applied to the retrained baseline. The ablation was evaluated at 0, 1, 5, 10,
+   20, and 50%. The clean model and all three zero-fault models reproduced their
+   saved Step 3/11a counts.
+
+**Fault damage** = that encoding's zero-fault accuracy minus its accuracy under
+the pattern. It is reported per pattern as mean ± sample SD across the 5
+patterns. Retrained-bound patterns are saved under the run's
+`checkpoints/…/patterns/` (633 MB). For the Step 4 baseline at the new rates and
+for the ablation, the pattern was regenerated in memory and checked to have
+identical cells.
+
+### Measured results (official test set)
+
+| Rate | Step 4 accuracy | Retrained accuracy | Step 4 damage (pp) | Retrained damage (pp) | Step 4 − retrained damage |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0% | 83.29% | 91.09% | 0 | 0 | — |
+| 0.1% | 82.89 ± 0.53 | 90.98 ± 0.14 | 0.40 ± 0.53 | 0.11 ± 0.14 | +0.29 |
+| 0.5% | 82.38 ± 1.40 | 90.83 ± 0.25 | 0.91 ± 1.40 | 0.26 ± 0.25 | +0.65 |
+| 1% | 80.53 ± 2.44 | 90.38 ± 0.14 | 2.76 ± 2.44 | 0.71 ± 0.14 | +2.05 |
+| 2% | 79.97 ± 4.21 | 89.06 ± 1.26 | 3.32 ± 4.21 | 2.03 ± 1.26 | +1.29 |
+| 5% | 77.77 ± 5.01 | 85.80 ± 1.16 | 5.52 ± 5.01 | 5.29 ± 1.16 | +0.23 |
+| 10% | 64.07 ± 9.07 | 72.21 ± 7.20 | **19.22 ± 9.07** | **18.88 ± 7.20** | +0.34 |
+| 20% | 50.50 ± 3.75 | 60.07 ± 8.70 | 32.79 ± 3.75 | 31.02 ± 8.70 | +1.77 |
+| 30% | 40.28 ± 6.13 | 42.91 ± 9.58 | 43.01 ± 6.13 | 48.18 ± 9.58 | −5.16 |
+| 50% | 22.86 ± 4.60 | 20.99 ± 5.46 | 60.43 ± 4.60 | 70.10 ± 5.46 | −9.67 |
+
+Actual fault rates matched the requested ones to within 0.003 percentage points
+of the cells (mean of 5 patterns). The new rates realized 20.0024%, 29.9994%,
+and 50.0025% of 11,172,032 cells.
+
+**Ablation (`codebook+BNaffine`), test accuracy:**
+
+| Rate | Accuracy | Damage (pp) |
+| ---: | ---: | ---: |
+| 0% | 91.70% | 0 |
+| 1% | 90.95 ± 0.12 | 0.75 ± 0.12 |
+| 5% | 87.26 ± 0.49 | 4.44 ± 0.49 |
+| 10% | 76.30 ± 5.76 | 15.40 ± 5.76 |
+| 20% | 62.55 ± 4.86 | 29.15 ± 4.86 |
+| 50% | 23.69 ± 5.85 | 68.01 ± 5.85 |
+
+Validation shows the same pattern. Retrained-baseline damage on validation was
+0.78 pp at 1%, 5.86 pp at 5%, and 18.84 pp at 10%; the Step 4 baseline's was
+2.22, 5.23, and 18.94 pp. All values are in `aggregate.json`.
+
+**Interpretation, limited to these measurements:**
+
+- **Low rates (≤2%):** the stale baseline did add damage. The retrained model
+  loses less, 0.71 vs 2.76 pp at 1%, and it varies much less across patterns
+  (SD 0.14 vs 2.44 pp).
+- **5% and 10%:** the damage is essentially the same, 5.29 vs 5.52 pp and
+  18.88 vs 19.22 pp. **The ~19 pp at 10% was not caused by the stale baseline.**
+  The retrained model ends higher there (72.21% vs 64.07%) only because it
+  starts 7.8 pp higher.
+- **30% and 50%:** the retrained baseline is damaged more. At 50% its accuracy
+  is slightly lower in absolute terms (20.99% vs 22.86%). One possible cause is
+  that its smaller codebook gaps (Step 11a) or re-estimated BatchNorm statistics
+  matter differently under massive corruption. That was not tested.
+- **Ablation:** it is slightly more robust from 5% upward (4.44 pp at 5%,
+  15.40 pp at 10%). It also trains 9,946 reliable parameters instead of 336.
+
+### Commands and files
+
+```zsh
+.venv/bin/python scripts/check_retrained_faults.py --config configs/resnet18_cifar10_retrained_fault_checks.json
+.venv/bin/python scripts/run_retrained_fault_sweep.py --config configs/resnet18_cifar10_retrained_fault_sweep.json
+```
+
+The audit took 1.3 s. The sweep took 4,249 s on MPS: 46 patterns, 118 paired
+model evaluations on both splits, plus the clean reference.
+
+- `src/fault_lora/evaluation/retrained_faults.py`: pattern identity across
+  encodings, the extended plan, both runners, aggregation, the figure, and
+  post-run verification. It is a new file; no previously hash-recorded file
+  changed.
+- `tests/test_retrained_faults.py`: seven offline checks:
+  - identical cells across encodings with the same indices;
+  - differing indices are detected and rejected;
+  - the extended seed plan;
+  - the damage formula;
+  - a full patched audit and sweep;
+  - a sweep that stops on mismatched cells before any evaluation;
+  - invalid configurations are rejected.
+
+| Artifact | Purpose |
+| --- | --- |
+| `results/resnet18-cifar10-retrained-fault-checks-seed42/` | Eight-check audit report, counts, configuration, and source hashes; audit pattern in the matching checkpoint directory. |
+| `results/resnet18-cifar10-retrained-fault-sweep-seed42/pattern_identity.json` | Per-pattern identity result, what each was compared with, and counts. |
+| `…/measurements.json`, `measurements.csv`, `patterns/*.json` | Every model × pattern × split measurement with its fault damage. |
+| `…/aggregate.json` | Per-model, per-rate statistics and the side-by-side damage table. |
+| `…/retrained_fault_sweep.png` / `.pdf` | The figure above; byte-identical copies in `docs/figures/`. |
+| `…/verification.json`, `manifest.json` | Post-run checks: identity, records, aggregate recomputation, CSV, input and plot hashes. |
+
+The full offline suite passes **116 tests**.
+
+### Limitations
+
+- **Patterns:** five per rate, and one retrained model (one Step 11a seed). SDs
+  describe variation across patterns only.
+- **Explanation not tested:** why the retrained model is damaged more at 30–50%
+  was not investigated.
+- **Fault model:** uniform adjacent-level simulator only; no hardware
+  calibration.
+- **Reliable memory:** codebooks, BatchNorm state, and biases are treated as
+  reliable.
+
 ## Next steps
 
 9. **Remaining ResNet-18 comparisons:** Step 9b covered matched clean and
    clustered bases, repeated patterns and seeds, and BatchNorm recalibration.
    Still open for ResNet-18: transfer to unseen patterns, rank and placement,
    combining BatchNorm recalibration with LoRA, and computation/storage overhead.
-   Step 11b: regenerate the Step 7 fault patterns against the retrained Step 11a
-   encodings with the same seeds, verify that positions and levels are
-   identical, and measure their fault behavior.
+   Step 11b measured fault behavior of the retrained baseline. Still open: LoRA
+   recovery on the retrained baseline, and why it is damaged more at 30–50%.
 10. **Language-model extension:** Steps 10a–10b established the TinyBERT /
     SST-2 clean, clustered, and faulty baselines through sibling modules, and
     Step 10c added two harsher conditions. Step 10d added the recovery code,

@@ -1,0 +1,32 @@
+{
+  "run_id": "resnet18-cifar10-retrained-fault-sweep-seed42",
+  "step7_results": "results/resnet18-cifar10-fault-sweep-seed42",
+  "finetune_results": "results/resnet18-cifar10-codebook-finetune-k16-seed42",
+  "audit_results": "results/resnet18-cifar10-retrained-fault-checks-seed42",
+  "baseline_variant": "codebook-bnstats",
+  "baseline_fingerprint": "18e55d67952361ebb6c47a4dc29887d17df2f367e2cf3fc22c116b72b9075220",
+  "ablation_variant": "codebook-bnaffine",
+  "ablation_fingerprint": "e088d98014a97c630f99bbee2d93a4766087955506a5ac0393e042ddd8c6f0ce",
+  "extra_probabilities": [
+    0.2,
+    0.3,
+    0.5
+  ],
+  "extra_first_seed": 72,
+  "patterns_per_rate": 5,
+  "ablation_probabilities": [
+    0,
+    0.01,
+    0.05,
+    0.1,
+    0.2,
+    0.5
+  ],
+  "evaluation_batch_size": 256,
+  "device": "mps",
+  "cpu_threads": 4,
+  "num_workers": 2,
+  "data_root": "data",
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}
