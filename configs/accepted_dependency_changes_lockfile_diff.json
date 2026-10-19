@@ -1,0 +1,85 @@
+{
+  "old_commit": "159ec94",
+  "old_sha256": {
+    "requirements.txt": "41d4f7c4e6512d71a83d1a84b180db31466f30c5737ae29b2a5cfb85d01ebbf4",
+    "requirements-macos-arm64.lock.txt": "9ed56bfa9e2121c5e6a435d8b046f39658cd3bc1e9a29c8eed5215bb7d86ba63"
+  },
+  "new_sha256": {
+    "requirements.txt": "2fb48fbfbfa11afa80c6b034e103e8211259e8d886d9de29d66682195726e7fa",
+    "requirements-macos-arm64.lock.txt": "372a31b87c71150a7f5026784de25e6f1fe8fbda3fa8d2cd6e05c8f7ba5cae80"
+  },
+  "requirements": {
+    "old_direct": [
+      "torch==2.14.1",
+      "torchvision==0.29.1",
+      "numpy==2.4.6",
+      "scikit-learn==1.9.1",
+      "matplotlib==3.11.2"
+    ],
+    "new_direct": [
+      "torch==2.14.1",
+      "torchvision==0.29.1",
+      "numpy==2.4.6",
+      "scikit-learn==1.9.1",
+      "matplotlib==3.11.2",
+      "transformers==5.19.0",
+      "datasets==5.1.0"
+    ],
+    "added": [
+      "transformers==5.19.0",
+      "datasets==5.1.0"
+    ],
+    "removed": []
+  },
+  "lockfile": {
+    "old_packages": 28,
+    "new_packages": 64,
+    "added": {
+      "aiohappyeyeballs": "2.7.1",
+      "aiohttp": "3.14.5",
+      "aiosignal": "1.4.0",
+      "annotated-doc": "0.0.5",
+      "anyio": "4.15.1",
+      "attrs": "26.1.0",
+      "click": "8.5.0",
+      "datasets": "5.1.0",
+      "dill": "0.4.1",
+      "frozenlist": "1.8.0",
+      "h11": "0.16.0",
+      "hf-xet": "1.7.0",
+      "httpcore2": "2.13.1",
+      "httpx2": "2.13.1",
+      "huggingface-hub": "2.2.0",
+      "idna": "3.20",
+      "markdown-it-py": "4.2.0",
+      "mdurl": "0.1.2",
+      "multidict": "7.1.0",
+      "multiprocess": "0.70.19",
+      "pandas": "3.0.6",
+      "propcache": "0.5.4",
+      "pyarrow": "26.0.0",
+      "pygments": "2.21.0",
+      "pyyaml": "6.0.3",
+      "regex": "2026.9.29",
+      "rich": "15.0.0",
+      "safetensors": "0.8.0",
+      "shellingham": "1.5.4",
+      "tokenizers": "0.23.3",
+      "tqdm": "4.70.1",
+      "transformers": "5.19.0",
+      "truststore": "0.10.5",
+      "typer": "0.27.3",
+      "xxhash": "4.0.1",
+      "yarl": "1.25.1"
+    },
+    "removed": {},
+    "version_changed": {
+      "fsspec": {
+        "old": "2026.9.0",
+        "new": "2026.7.0"
+      }
+    },
+    "same_version": 27,
+    "same_version_with_different_wheel_hashes": []
+  }
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "path": "requirements.txt",
+    "old_sha256": "41d4f7c4e6512d71a83d1a84b180db31466f30c5737ae29b2a5cfb85d01ebbf4",
+    "new_sha256": "2fb48fbfbfa11afa80c6b034e103e8211259e8d886d9de29d66682195726e7fa",
+    "reason": "Merge of tinybert-sst2 into lora-controls (108e9a9) added transformers 5.19.0, datasets 5.1.0 and their dependencies (36 packages). All 28 original lockfile packages keep their versions and wheel hashes except fsspec, 2026.9.0 -> 2026.7.0, capped by datasets 5.1.0. Verified from git history (159ec94); see configs/accepted_dependency_changes_lockfile_diff.json.",
+    "date": "2026-10-18"
+  },
+  {
+    "path": "requirements-macos-arm64.lock.txt",
+    "old_sha256": "9ed56bfa9e2121c5e6a435d8b046f39658cd3bc1e9a29c8eed5215bb7d86ba63",
+    "new_sha256": "372a31b87c71150a7f5026784de25e6f1fe8fbda3fa8d2cd6e05c8f7ba5cae80",
+    "reason": "Merge of tinybert-sst2 into lora-controls (108e9a9) added transformers 5.19.0, datasets 5.1.0 and their dependencies (36 packages). All 28 original lockfile packages keep their versions and wheel hashes except fsspec, 2026.9.0 -> 2026.7.0, capped by datasets 5.1.0. Verified from git history (159ec94); see configs/accepted_dependency_changes_lockfile_diff.json.",
+    "date": "2026-10-18"
+  }
+]

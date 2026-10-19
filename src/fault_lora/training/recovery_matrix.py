@@ -16,6 +16,7 @@ import torch
 
 from fault_lora.evaluation.clustered_baseline import sha256_file, write_json
 from fault_lora.evaluation.fault_checks import require
+from fault_lora.evaluation.source_hashes import compare_source_hashes, unique_changes
 from fault_lora.training import recovery
 from fault_lora.training.recovery import RecoveryConfig
 
@@ -109,7 +110,10 @@ def write_summary(results_dir, rows):
 
 
 def verify_run(root, config, run, row, *, check_source_code=True):
-    """Re-read one finished run of a matrix; return its number of verified input artifacts."""
+    """Re-read one finished run of a matrix.
+
+    Returns its number of verified input artifacts and any accepted source-hash changes.
+    """
     root = Path(root)
     expected = run_config(config, run)
     directory = root / config.results_root / expected.run_id
@@ -136,10 +140,10 @@ def verify_run(root, config, run, row, *, check_source_code=True):
     manifest = json.loads((directory / "manifest.json").read_text())
     for name, item in manifest["source_artifacts"].items():
         require(sha256_file(root / item["path"]) == item["sha256"], f"Input artifact changed after {expected.run_id}: {name}")
+    accepted = []
     if check_source_code:
-        for relative, digest in json.loads((directory / "source_sha256.json").read_text()).items():
-            require(sha256_file(root / relative) == digest, f"Source code changed after {expected.run_id}: {relative}")
-    return len(manifest["source_artifacts"])
+        accepted = compare_source_hashes(root, json.loads((directory / "source_sha256.json").read_text()), f"Source code changed after {expected.run_id}")
+    return {"source_artifacts": len(manifest["source_artifacts"]), "accepted_source_hash_changes": accepted}
 
 
 def verify_matrix(root, config):
@@ -152,12 +156,13 @@ def verify_matrix(root, config):
     require([row["run_id"] for row in rows] == [entry["run_id"] for entry in plan], "Summary is incomplete, duplicated, or reordered")
     with (results_dir / "summary.csv").open(newline="") as stream:
         require(list(csv.DictReader(stream)) == [csv_row(row) for row in rows], "CSV and JSON summaries disagree")
-    source_artifacts = sum(verify_run(root, config, run, row) for run, row in zip(config.runs, rows))
-    for relative, digest in json.loads((results_dir / "source_sha256.json").read_text()).items():
-        require(sha256_file(root / relative) == digest, f"Source code changed during the matrix: {relative}")
+    runs = [verify_run(root, config, run, row) for run, row in zip(config.runs, rows)]
+    accepted = [change for result in runs for change in result["accepted_source_hash_changes"]]
+    accepted += compare_source_hashes(root, json.loads((results_dir / "source_sha256.json").read_text()), "Source code changed during the matrix")
     return {"status": "passed", "runs_verified": len(rows), "plan_and_summary_order_verified": True, "csv_matches_json": True, "run_configurations_match_matrix": True,
             "summary_rows_match_saved_metrics": True, "selection_verified_using_validation_only": True, "selected_checkpoint_hashes_verified": True,
-            "base_frozen_every_epoch": True, "source_artifacts_verified": source_artifacts, "source_code_unchanged": True}
+            "base_frozen_every_epoch": True, "source_artifacts_verified": sum(result["source_artifacts"] for result in runs),
+            "source_code_unchanged": not accepted, "accepted_source_hash_changes": unique_changes(accepted)}
 
 
 def run_matrix(config, project_root):

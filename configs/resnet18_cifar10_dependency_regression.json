@@ -1,0 +1,28 @@
+{
+  "run_id": "resnet18-cifar10-dependency-regression-v1",
+  "adapter_runs": [
+    "resnet18-cifar10-lora-r4-p001-seed52-train42",
+    "resnet18-cifar10-lora-clustered-none-r4-train42",
+    "resnet18-cifar10-lora-faulty-rate06-seed67-r4-train42"
+  ],
+  "source_sweep_results": "results/resnet18-cifar10-fault-sweep-seed42",
+  "clean_results": "results/resnet18-cifar10-clean-seed42",
+  "clustered_results": "results/resnet18-cifar10-clustered-k16-seed42",
+  "verified_matrices": [
+    "results/resnet18-cifar10-lora-controls-b",
+    "results/resnet18-cifar10-lora-faulty-p001",
+    "results/resnet18-cifar10-lora-faulty-p005",
+    "results/resnet18-cifar10-lora-faulty-p010"
+  ],
+  "interrupted_matrix": "results/resnet18-cifar10-lora-controls-matrix",
+  "bn_results": "results/resnet18-cifar10-bn-recalibration-seed42",
+  "analysis_config": "configs/resnet18_cifar10_lora_controls.json",
+  "analysis_results": "results/resnet18-cifar10-lora-controls",
+  "old_dependency_commit": "159ec94",
+  "evaluation_batch_size": 256,
+  "device": "mps",
+  "cpu_threads": 4,
+  "num_workers": 2,
+  "data_root": "data",
+  "results_root": "results"
+}

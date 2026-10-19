@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fault_lora.evaluation.bn_recalibration import BNRecalibrationConfig, run_bn_recalibration
+from fault_lora.evaluation.clustered_baseline import sha256_file
 from fault_lora.evaluation.fault_sweep import summarize_values
 from fault_lora.evaluation.lora_controls import CONDITION_FIELDS, ControlsConfig, analyze_controls, condition_table, run_controls_analysis, step8_regression
 from fault_lora.training import recovery
@@ -217,7 +218,18 @@ class ControlsTests(unittest.TestCase):
             source.write_text(json.dumps({**json.loads(saved), "src/fault_lora/changed.py": "0" * 64}))
             with self.assertRaises(AssertionError):
                 attempt()
-            self.assertEqual(run_controls_analysis(ControlsConfig(run_id="controls-3", **options, sources_allowed_to_differ=["src/fault_lora/changed.py"]), root)["source_files_changed_since_runs"], ["src/fault_lora/changed.py"])
+            # A declared Step 9b exemption alone no longer accepts it; only a listed exact change does.
+            with self.assertRaises(AssertionError):
+                attempt(sources_allowed_to_differ=["src/fault_lora/changed.py"])
+            (root / "configs").mkdir(exist_ok=True)
+            current = sha256_file(root / "src/fault_lora/changed.py")
+            (root / "configs/accepted_source_changes.json").write_text(json.dumps([{"path": "src/fault_lora/changed.py", "old_sha256": "0" * 64, "new_sha256": current,
+                                                                                  "reason": "synthetic test change", "date": "2026-10-18", "commit": None}]))
+            analysis = run_controls_analysis(ControlsConfig(run_id="controls-3", **options), root)
+            self.assertEqual(analysis["source_files_changed_since_runs"], ["src/fault_lora/changed.py"])
+            self.assertEqual([(change["path"], change["list"], change["records"]) for change in analysis["accepted_source_hash_changes"]], [("src/fault_lora/changed.py", "source", 1)])
+            self.assertEqual(json.loads((root / "results/controls-3/verification.json").read_text())["accepted_source_hash_changes"][0]["current_sha256"], current)
+            (root / "configs/accepted_source_changes.json").unlink()
             source.write_text(saved)
             original = json.loads((root / "results/step8/metrics.json").read_text())
             original["after"]["test"]["accuracy"] += .01

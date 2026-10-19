@@ -26,6 +26,7 @@ from fault_lora.evaluation.classification import evaluate_classifier
 from fault_lora.evaluation.clustered_baseline import save_torch, sha256_file, write_json
 from fault_lora.evaluation.fault_checks import require
 from fault_lora.evaluation.fault_sweep import summarize_values
+from fault_lora.evaluation.source_hashes import compare_source_hashes, unique_changes
 from fault_lora.memory.faults import validate_parameters
 from fault_lora.models.resnet import build_resnet18
 from fault_lora.training import recovery
@@ -196,11 +197,10 @@ def verify_recalibration(root, config):
     manifest = json.loads((results_dir / "manifest.json").read_text())
     for name, item in manifest["source_artifacts"].items():
         require(sha256_file(root / item["path"]) == item["sha256"], f"Input artifact changed: {name}")
-    for relative, digest in json.loads((results_dir / "source_sha256.json").read_text()).items():
-        require(sha256_file(root / relative) == digest, f"Source code changed during the run: {relative}")
+    accepted = compare_source_hashes(root, json.loads((results_dir / "source_sha256.json").read_text()), "Source code changed during the run")
     return {"status": "passed", "conditions_verified": len(records), "calibration_subset_reproduced_and_disjoint_from_validation": True, "paired_baselines_match_step7": True,
             "only_batchnorm_buffers_changed": True, "saved_statistics_hashes_verified": True, "aggregate_recomputed": True, "csv_matches_json": True,
-            "source_artifacts_verified": len(manifest["source_artifacts"]), "source_code_unchanged": True}
+            "source_artifacts_verified": len(manifest["source_artifacts"]), "source_code_unchanged": not accepted, "accepted_source_hash_changes": unique_changes(accepted)}
 
 
 def run_bn_recalibration(config, project_root):
@@ -223,13 +223,14 @@ def run_bn_recalibration(config, project_root):
         environment = {"python": platform.python_version(), "platform": platform.platform(), "device": str(device), "cpu_threads": config.cpu_threads,
                        "packages": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "numpy")}}
         write_json(results_dir / "environment.json", environment)
-        loaders, shared, source_paths, source_hashes = None, None, {}, {}
+        loaders, shared, source_paths, source_hashes, accepted = None, None, {}, {}, []
         for condition in config.conditions:
             identifier = condition_id(condition)
             print(json.dumps({"event": "recalibration_start", "condition_id": identifier, "completed_conditions": len(records), "planned_conditions": len(config.conditions)}), flush=True)
             condition_started = time.monotonic()
             source = condition_config(config, condition)
             encoding, metadata, split, record, _, paths, hashes = recovery.prepare_sources(root, source)
+            accepted += record.get("accepted_source_hash_changes", [])
             require(all(source_hashes.get(name, digest) == digest for name, digest in hashes.items()), "Conditions disagree about a shared input artifact")
             source_paths.update({name: path for name, path in paths.items() if name != "selected_pattern"})
             source_hashes.update({name: digest for name, digest in hashes.items() if name != "selected_pattern"})
@@ -295,7 +296,7 @@ def run_bn_recalibration(config, project_root):
                     "unchanged_state": "All weights, biases, and BatchNorm affine parameters are exactly preserved; only running_mean, running_var, and num_batches_tracked change.",
                     "selection_policy": "Conditions, subset size, batch size, and seed fixed in the configuration; no training, tuning, or checkpoint selection. Validation and test only characterize the declared conditions.",
                     "relation_to_lora": "Separate run and directories; LoRA recovery runs keep their own frozen original statistics and equality checks.",
-                    "environment": environment, "completed_conditions": len(records), "elapsed_seconds": time.monotonic() - started}
+                    "accepted_source_hash_changes": unique_changes(accepted), "environment": environment, "completed_conditions": len(records), "elapsed_seconds": time.monotonic() - started}
         write_json(results_dir / "manifest.json", manifest)
         write_json(results_dir / "verification.json", verify_recalibration(root, config))
         write_json(results_dir / "status.json", {"status": "complete", "completed_conditions": len(records), "planned_conditions": len(config.conditions), "completed_at_utc": datetime.now(timezone.utc).isoformat()})

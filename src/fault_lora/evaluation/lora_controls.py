@@ -24,6 +24,7 @@ import time
 from fault_lora.evaluation.clustered_baseline import sha256_file, write_json
 from fault_lora.evaluation.fault_checks import require
 from fault_lora.evaluation.fault_sweep import summarize_values
+from fault_lora.evaluation.source_hashes import compare_source_hashes, unique_changes
 from fault_lora.training.recovery_matrix import MatrixConfig, matrix_plan, summary_row, verify_run
 
 
@@ -316,7 +317,7 @@ def load_sources(root, config):
     require(read("bn_status.json")["status"] == "complete" and read("bn_verification.json")["status"] == "passed", "BatchNorm baseline is incomplete or unverified")
     require(read("sweep_status.json")["status"] == "complete", "Source sweep is incomplete")
     require(read("bn_config.json")["source_sweep_results"] == config.source_sweep_results, "Inputs were produced from different sweeps")
-    rows, run_metrics, changed, matrices = [], {}, set(), []
+    rows, run_metrics, accepted, matrices = [], {}, [], []
     for item in config.source_matrices:
         directory = root / item["results"]
         label = f"matrix_{directory.name}"
@@ -334,17 +335,15 @@ def load_sources(root, config):
         require([row["run_id"] for row in finished] == [entry["run_id"] for entry in plan[:len(finished)]], f"Matrix summary is reordered: {item['results']}")
         for run, row in zip(matrix_config.runs, finished):
             run_directory = root / matrix_config.results_root / row["run_id"]
-            # Source code may legitimately differ only in the declared analysis-side files.
-            verify_run(root, matrix_config, run, row, check_source_code=False)
-            changed |= {relative for relative, digest in json.loads((run_directory / "source_sha256.json").read_text()).items() if sha256_file(root / relative) != digest}
+            # Recorded source hashes must match, or be a change listed in a committed decision file.
+            accepted += verify_run(root, matrix_config, run, row)["accepted_source_hash_changes"]
             paths[f"run_{row['run_id']}"] = run_directory / "metrics.json"
             paths[f"run_source_{row['run_id']}"] = run_directory / "source_sha256.json"
             run_metrics[row["run_id"]] = json.loads(paths[f"run_{row['run_id']}"].read_text())
-        changed |= {relative for relative, digest in read(f"{label}_source_sha256.json").items() if sha256_file(root / relative) != digest}
+        accepted += compare_source_hashes(root, read(f"{label}_source_sha256.json"), f"Source code changed after matrix {item['results']}")
         rows += finished
         matrices.append({"results": item["results"], "status": item["status"], "planned_runs": len(plan), "used_runs": len(finished)})
     require(len({row["run_id"] for row in rows}) == len(rows), "A run appears in more than one matrix")
-    require(changed <= set(config.sources_allowed_to_differ), f"Source code used by the runs changed: {sorted(changed - set(config.sources_allowed_to_differ))}")
     regression = None
     if config.step8_results is not None:
         paths["step8_metrics.json"] = root / config.step8_results / "metrics.json"
@@ -352,7 +351,9 @@ def load_sources(root, config):
         regression = step8_regression(read("step8_metrics.json"), run_metrics[config.step8_rerun_id], config.step8_tolerance_percentage_points)
     hashes = {name: sha256_file(path) for name, path in paths.items()}
     inputs = (rows, read("bn_measurements.json"), read("sweep_measurements.json"), read("sweep_plan.json"), read("sweep_aggregate.json"), read("sweep_references.json"))
-    return inputs, {"matrices": matrices, "source_files_changed_since_runs": sorted(changed), "step8_regression": regression}, paths, hashes
+    # sources_allowed_to_differ (Step 9b) is reported only; acceptance is decided by the shared rule alone.
+    return inputs, {"matrices": matrices, "source_files_changed_since_runs": sorted({change["path"] for change in accepted}), "accepted_source_hash_changes": unique_changes(accepted),
+                    "declared_sources_allowed_to_differ": config.sources_allowed_to_differ, "step8_regression": regression}, paths, hashes
 
 
 def build_analysis(root, config):
@@ -360,6 +361,7 @@ def build_analysis(root, config):
     analysis = analyze_controls(*inputs, config)
     analysis["source_matrices"] = provenance["matrices"]
     analysis["source_files_changed_since_runs"] = provenance["source_files_changed_since_runs"]
+    analysis["accepted_source_hash_changes"] = provenance["accepted_source_hash_changes"]
     analysis["step8_regression"] = provenance["step8_regression"]
     return analysis, paths, hashes
 
@@ -399,7 +401,7 @@ def run_controls_analysis(config, project_root):
         with (results_dir / "conditions.csv").open(newline="") as stream:
             require(list(csv.DictReader(stream)) == condition_table(analysis), "CSV differs from the saved analysis")
         require(all(path.stat().st_size > 1000 for path in figures), "Figure export failed")
-        require(all(sha256_file(root / relative) == digest for relative, digest in source_code.items()), "Source code changed during the analysis")
+        compare_source_hashes(root, source_code, "Source code changed during the analysis")
         manifest = {"run_id": config.run_id, "source_artifacts": {name: {"path": str(path.relative_to(root)), "sha256": hashes[name]} for name, path in paths.items()},
                     "source_matrices": analysis["source_matrices"], "definitions": DEFINITIONS,
                     "run_policy": "Only runs listed in a declared matrix summary are read; an interrupted matrix contributes its finished runs; archived runs are never inputs.",
@@ -407,7 +409,8 @@ def run_controls_analysis(config, project_root):
                     "plots": [{"path": str(path.relative_to(root)), "sha256": sha256_file(path)} for path in figures], "environment": environment, "elapsed_seconds": time.monotonic() - started}
         write_json(results_dir / "manifest.json", manifest)
         write_json(results_dir / "verification.json", {"status": "passed", "design_matches_configuration": True, "runs_paired_with_step7": True, "runs_reverified": analysis["design"]["num_runs"],
-                                                      "source_files_changed_since_runs": analysis["source_files_changed_since_runs"], "step8_regression_passed": regression and regression["passed"],
+                                                      "source_files_changed_since_runs": analysis["source_files_changed_since_runs"],
+                                                      "accepted_source_hash_changes": analysis["accepted_source_hash_changes"], "step8_regression_passed": regression and regression["passed"],
                                                       "analysis_recomputed_from_reread_inputs": True, "csv_matches_analysis": True, "input_artifacts_unchanged": len(hashes),
                                                       "source_code_unchanged_during_analysis": True, "plot_hashes_recorded": True})
         write_json(results_dir / "status.json", {"status": "complete", "completed_at_utc": datetime.now(timezone.utc).isoformat()})

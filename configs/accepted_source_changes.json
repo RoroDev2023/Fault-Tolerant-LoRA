@@ -1,0 +1,50 @@
+[
+  {
+    "path": "src/fault_lora/evaluation/bn_recalibration.py",
+    "old_sha256": "0c781fe1c2eab21c427a0d39e3a532240739d0aa5907bc716253c4f7a7d9c84f",
+    "new_sha256": "1cef7692c5758b0c0e65ad6a08da48ceba22db44f1ea29a4bd56df62cb3e36bd",
+    "reason": "Verification-path change for the dependency-hash fix (2026-10-18): verify_recalibration and the run manifest now use the shared rule and report accepted changes. No change to training, evaluation, or result computation. Recorded by 42 re-verified record(s).",
+    "date": "2026-10-18",
+    "commit": "7bd3d9d"
+  },
+  {
+    "path": "src/fault_lora/evaluation/lora_controls.py",
+    "old_sha256": "42200b73c7f87d20fc61d2d3cbcfa03d1b0004f382ebcec4369fa1f79dedd1db",
+    "new_sha256": "8f97d863bb75d3dc8a9b28f9f0d8bc36a8f7939209eca782bbe1d9d71c1d6a04",
+    "reason": "Verification-path change for the dependency-hash fix (2026-10-18): analysis input loading and its during-run check now use the shared rule; sources_allowed_to_differ is reported only. No change to training, evaluation, or result computation. This version is also the Step 9b working-tree state recorded by the first (interrupted) controls matrix and the BatchNorm run, before multi-matrix loading; it was never committed. Recorded by 6 re-verified record(s).",
+    "date": "2026-10-18",
+    "commit": null
+  },
+  {
+    "path": "src/fault_lora/evaluation/lora_controls.py",
+    "old_sha256": "48903dce697373e0b2df302aa780404d796d6a75e4ce03bd0db35e711a97e807",
+    "new_sha256": "8f97d863bb75d3dc8a9b28f9f0d8bc36a8f7939209eca782bbe1d9d71c1d6a04",
+    "reason": "Verification-path change for the dependency-hash fix (2026-10-18): analysis input loading and its during-run check now use the shared rule; sources_allowed_to_differ is reported only. No change to training, evaluation, or result computation. Recorded by 36 re-verified record(s).",
+    "date": "2026-10-18",
+    "commit": "7bd3d9d"
+  },
+  {
+    "path": "src/fault_lora/training/recovery.py",
+    "old_sha256": "6fb75fc3d93e2056b3f91479d29f55289696cc1ae642171e893b90fbd4cd645e",
+    "new_sha256": "d14c2184acfba5ddbdda676b481829ea9985b846a6e26fd7f9af7c0db04d126a",
+    "reason": "Verification-path change for the dependency-hash fix (2026-10-18): prepare_sources, run_recovery, load_recovered_model and evaluate_adapter_on_base now compare recorded hashes through the shared rule and report accepted changes. No change to training, evaluation, or result computation. Recorded by 42 re-verified record(s).",
+    "date": "2026-10-18",
+    "commit": "159ec94"
+  },
+  {
+    "path": "src/fault_lora/training/recovery_matrix.py",
+    "old_sha256": "96e56853f9712d880108ff1bcd66d44e8926cc0a79f205ad7eb7349401ce6eee",
+    "new_sha256": "e86453fafba4e07d946e84c7e0151bc46817d6b2dd6520f56ad63ada0983df4f",
+    "reason": "Verification-path change for the dependency-hash fix (2026-10-18): verify_run and verify_matrix now compare recorded hashes through the shared rule and report accepted changes. No change to training, evaluation, or result computation. This version is also the Step 9b working-tree state recorded by the first (interrupted) controls matrix and the BatchNorm run, before verify_run was factored out; it was never committed. Recorded by 6 re-verified record(s).",
+    "date": "2026-10-18",
+    "commit": null
+  },
+  {
+    "path": "src/fault_lora/training/recovery_matrix.py",
+    "old_sha256": "c0aac7be72612996ed6a3a81f39fe97426b184bc328ffd59ce932d77bf7c8a62",
+    "new_sha256": "e86453fafba4e07d946e84c7e0151bc46817d6b2dd6520f56ad63ada0983df4f",
+    "reason": "Verification-path change for the dependency-hash fix (2026-10-18): verify_run and verify_matrix now compare recorded hashes through the shared rule and report accepted changes. No change to training, evaluation, or result computation. Recorded by 36 re-verified record(s).",
+    "date": "2026-10-18",
+    "commit": "7bd3d9d"
+  }
+]

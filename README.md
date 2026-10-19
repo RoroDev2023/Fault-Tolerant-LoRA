@@ -14,7 +14,7 @@ evaluated on CIFAR-10, and their configurations, splits, preprocessing,
 checkpoints/encodings, provenance, and measured results are saved locally. The
 original clean checkpoint is preserved. A simplified adjacent-level simulator
 has saved one static 1%-probability fault pattern and its reconstructed faulty
-checkpoint. All eight full-model Step 6 audit checks and 93 unit tests pass.
+checkpoint. All eight full-model Step 6 audit checks and 101 unit tests pass.
 Step 7 completed 31 static-pattern evaluations across seven probabilities, with
 five patterns per nonzero rate, and saved individual measurements and plots.
 Step 8 trained rank-4 LoRA adapters for five epochs on one saved 1% pattern,
@@ -153,8 +153,9 @@ PEFT is not used: the adapters are this repository's own.
 The ResNet-18 runs in Steps 3–9b recorded SHA-256 hashes of `requirements.txt`
 and the lockfile **as they were before Step 10a** (five direct dependencies,
 28-package lockfile). Those records are kept unchanged. After the TinyBERT
-branch was merged, both files differ from the recorded hashes. Some ResNet
-re-verification and loading paths compare those hashes and now stop; see
+branch was merged, both files differ from the recorded hashes. ResNet checks
+accept that difference only through a recorded decision, backed by an
+evaluation-only regression run; see
 [Dependency files after the TinyBERT merge](#dependency-files-after-the-tinybert-merge).
 
 On a matching macOS arm64 / CPython 3.11 environment, install the full lockfile:
@@ -214,46 +215,119 @@ model throughput, training capacity, or compatibility of every model operator.
 
 The `lora-controls` branch (Steps 1–9b) and the `tinybert-sst2` branch
 (Steps 10a–10e) were merged. The merge kept the TinyBERT `requirements.txt`
-(seven direct dependencies) and lockfile (64 packages). They add `transformers`,
-`datasets`, and their dependencies. Of the original 28 packages, all keep the same
-version except `fsspec`, a PyTorch dependency, which moves down from 2026.9.0 to
-2026.7.0 because `datasets` 5.1.0 caps it. The merged lockfile
-was installed into `.venv` with `--require-hashes`; `pip check` reported no
-broken requirements, and the full offline suite passed **93 tests**.
+(seven direct dependencies) and lockfile (64 packages). The merged lockfile
+was installed into `.venv` with `--require-hashes`, and `pip check` reported no
+broken requirements.
 
-Every ResNet-18 run in Steps 3–9b recorded the **older** `requirements.txt` and
-lockfile hashes in its `source_sha256.json`. Those records were not edited. A
-read-only check after the merge found all 49 ResNet result records now differ
-from the current files in exactly those two dependency files. 42 of them differ
-only there. Seven had already differed before the merge because of code changes
-documented in Steps 9a–9b:
+Every ResNet-18 run in Steps 3–9b recorded the **older** hashes of both files
+in its `source_sha256.json`: `requirements.txt` `41d4f7c4…` and the lockfile
+`9ed56bfa…`. All 50 records under `results/` carry exactly those values. The
+records were not edited. Right after the merge, every ResNet code path that
+compares recorded hashes stopped with an `AssertionError`.
 
-| Records | Files that no longer match |
-| --- | --- |
-| 42: Steps 3–7, the Step 9b analysis, the four complete Step 9b matrices, and their 32 runs | the two dependency files only |
-| Step 8 run | the two dependency files and `training/recovery.py` (Step 9a) |
-| BatchNorm recalibration, the interrupted first Step 9b matrix, and its 4 runs | the two dependency files, `evaluation/lora_controls.py`, and `training/recovery_matrix.py` (Step 9b) |
+#### Recorded decision
 
-These ResNet code paths compare those hashes and **now stop with an
-`AssertionError`**. No saved result or checkpoint changed, and the saved
-`verification.json` files still record what passed when each run was made.
+Mismatches are accepted only through two committed decision files, each
+listing exact `{path, old_sha256, new_sha256, reason, date}` changes:
 
-- `recovery.prepare_sources` for all three base kinds stops on the Step 7 sweep's
-  recorded `requirements.txt` hash. That blocks new ResNet LoRA runs
-  (`run_recovery`, `run_lora_matrix.py`), `load_recovered_model`,
-  `load_adapter_on_base`/`evaluate_adapter_on_base`, and new BatchNorm
-  recalibration runs.
-- `verify_matrix` stops for each of the four complete Step 9b matrices.
-- `analyze_lora_controls.py` input loading stops; the two dependency files are not
-  in its declared `sources_allowed_to_differ`.
-- `verify_recalibration` and source-checked `verify_run` on the interrupted
-  matrix's runs already stopped before the merge, on the Step 9b code files.
-  They now also mismatch on the dependency files.
-- Still passing: `fault_sweep.prepare_sources` (Steps 3–6 provenance and the
-  Step 6 audit) and `verify_run` with its source-code check off.
+| File | May list | Entries |
+| --- | --- | --- |
+| `configs/accepted_dependency_changes.json` | only `requirements.txt` and the lockfile | 2 |
+| `configs/accepted_source_changes.json` | only Python files under `src/fault_lora/`; also records the `commit` holding the old version, or `null` | 6 |
 
-Running ResNet tooling again will need a recorded decision on how to treat
-these dependency-file differences. No such change has been made.
+The dependency reason was checked against git history (`159ec94`, the last
+pre-merge version). The summary is saved in
+`configs/accepted_dependency_changes_lockfile_diff.json`:
+
+- **Direct requirements:** `transformers==5.19.0` and `datasets==5.1.0` added;
+  none removed.
+- **Lockfile:** grew from 28 to 64 packages. 36 were added and none removed.
+  Of the 28 original packages, 27 keep the same version **and** wheel hashes.
+  `fsspec` moves down from 2026.9.0 to 2026.7.0, because `datasets` 5.1.0 caps it.
+
+The source-change list exists because the fix itself had to edit four files.
+Every Step 9b run recorded hashes of all of `src/fault_lora/`, so a strict
+check would reject these edits. The six entries are the recorded versions of
+four files whose checking code changed. None of the edits changes training,
+evaluation, or result computation:
+
+- `training/recovery.py` (old version in `159ec94`)
+- `training/recovery_matrix.py` and `evaluation/lora_controls.py`: two old
+  versions each, one in `7bd3d9d` and one an uncommitted Step 9b working-tree
+  state recorded by the interrupted first matrix and the BatchNorm run
+  (`commit: null`)
+- `evaluation/bn_recalibration.py` (old version in `7bd3d9d`)
+
+`src/fault_lora/evaluation/source_hashes.py` holds the single rule,
+`compare_source_hashes`. A recorded hash passes only if it equals the current
+file, or the exact `(path, recorded, current)` triple is listed in the correct
+decision file. Every other file must match exactly. Each accepted mismatch is
+returned and written into the caller's records: run manifests, `verify_matrix`
+and `verify_recalibration` output, analysis provenance, and the regression run.
+The rule is used by:
+
+- `recovery.prepare_sources`, `run_recovery`, `load_recovered_model`, and
+  `evaluate_adapter_on_base`
+- `verify_run` and `verify_matrix`
+- `verify_recalibration` and the BatchNorm recalibration manifest
+- the Step 9b analysis input loading and its during-run check
+
+The analysis config's `sources_allowed_to_differ` is now reported only and
+grants nothing.
+
+Two other hash checks were deliberately left unchanged:
+
+- **Step 6 audit (`fault_checks.py`):** this file is itself in the Step 7
+  sweep's recorded hashes. Editing it would make `prepare_sources` reject
+  everywhere, so its own exact check stays as it was. Re-running the Step 6
+  audit would still stop on the dependency files.
+- **TinyBERT code:** its checks were not changed; its runs recorded the new
+  dependency files.
+
+#### Regression proof: `results/resnet18-cifar10-dependency-regression-v1/`
+
+This run did evaluation only, on MPS with no training, and on the saved splits
+with batch size 256. Adapters were reloaded with `load_recovered_model`.
+"Adapter zeroed" re-evaluates the same model with every `lora_B` set to zero,
+which reproduces the saved before-LoRA metrics. Correct counts had to equal the
+saved values exactly. Cross-entropy was reported; every difference was 0.
+
+| Model | Validation correct (now / saved) | Test correct (now / saved) |
+| --- | ---: | ---: |
+| Clean reference (Step 3) | 4,622 / 4,622 | 9,228 / 9,228 |
+| Clustered reference (Step 4) | 4,167 / 4,167 | 8,329 / 8,329 |
+| Step 8 adapter, `rate03-seed52` | 4,616 / 4,616 | 9,176 / 9,176 |
+| Step 8, adapter zeroed | 4,013 / 4,013 | 7,991 / 7,991 |
+| Step 9b clustered base, seed 42 | 4,630 / 4,630 | 9,228 / 9,228 |
+| Same, adapter zeroed | 4,167 / 4,167 | 8,329 / 8,329 |
+| Step 9b 10% `rate06-seed67`, seed 42 | 4,626 / 4,626 | 9,204 / 9,204 |
+| Same, adapter zeroed | 3,463 / 3,463 | 6,848 / 6,848 |
+
+The same run re-verified everything under the shared rule. All checks passed,
+and each lists its accepted changes in `reverification.json`:
+
+- `prepare_sources` for clean, clustered, and faulty bases. Only the two
+  dependency changes were accepted.
+- `verify_matrix` for the four complete Step 9b matrices (32 runs).
+- Source-checked `verify_run` for the interrupted matrix's four finished runs.
+- `verify_recalibration` for the BatchNorm run.
+- The Step 9b analysis input loading. The re-derived analysis equals the saved
+  `analysis.json` in every value; only the two provenance fields that list
+  source differences are recomputed.
+
+In `verification.json`, the `records` count in the combined
+`accepted_source_hash_changes` list counts reporting checks, not run
+records. Per-record counts are in `reverification.json`. The run took 303 s,
+and SHA-256 of every pre-existing file under `results/` and `checkpoints/` was
+unchanged.
+
+```zsh
+.venv/bin/python scripts/check_dependency_regression.py --config configs/resnet18_cifar10_dependency_regression.json
+```
+
+Any further edit to a file whose hash a run recorded needs a new, explicitly
+reasoned entry in the matching decision file. Otherwise every check that reads
+that record stops.
 
 ## Step 3: Clean ResNet-18 baseline
 

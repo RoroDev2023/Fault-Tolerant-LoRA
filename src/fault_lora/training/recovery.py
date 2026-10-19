@@ -25,6 +25,7 @@ from fault_lora.evaluation.classification import evaluate_classifier
 from fault_lora.evaluation.clustered_baseline import save_torch, sha256_file, write_json
 from fault_lora.evaluation.fault_checks import require, require_state_equal
 from fault_lora.evaluation.fault_sweep import SweepConfig, prepare_sources as prepare_audited_sources, sweep_plan
+from fault_lora.evaluation.source_hashes import compare_source_hashes
 from fault_lora.memory.clustering import decode_state
 from fault_lora.memory.faults import apply_fault_pattern, encoding_fingerprint, summarize_fault_pattern, validate_parameters
 from fault_lora.models.lora import adapter_state_dict, attach_lora, base_state_dict, load_adapter_state
@@ -126,8 +127,7 @@ def prepare_sources(root, config):
         path = root / item["path"]
         require(sha256_file(path) == item["sha256"], f"Sweep source artifact changed: {name}")
         paths[f"sweep_input_{name}"], hashes[f"sweep_input_{name}"] = path, item["sha256"]
-    for relative, digest in json.loads((directory / "source_sha256.json").read_text()).items():
-        require(sha256_file(root / relative) == digest, f"Previously used sweep code changed: {relative}")
+    accepted = compare_source_hashes(root, json.loads((directory / "source_sha256.json").read_text()), "Previously used sweep code changed")
     for filename in ["config.json", "plan.json", "status.json", "manifest.json", "measurements.json", "references.json", "source_sha256.json"] + ([f"patterns/{config.pattern_id}.json"] if faulty else []):
         path = directory / filename
         paths[f"sweep_{filename}"], hashes[f"sweep_{filename}"] = path, sha256_file(path)
@@ -139,6 +139,8 @@ def prepare_sources(root, config):
         pattern = torch.load(paths["selected_pattern"], map_location="cpu", weights_only=True)
         require(pattern["seed"] == record["seed"] and pattern["fault_probability"] == record["probability"], "Selected pattern seed or probability changed")
         require(summarize_fault_pattern(encoding, pattern) == record["counts"], "Selected pattern counts differ from Step 7")
+    # Accepted recorded-hash differences travel with the record so every caller can report them.
+    record = {**record, "accepted_source_hash_changes": accepted}
     return encoding, metadata, split, record, references, paths, hashes
 
 
@@ -218,7 +220,8 @@ def load_recovered_model(checkpoint_path, project_root, *, device="cpu"):
     model, context = _restore_adapter(payload, RecoveryConfig(**payload["config"]), root, device)
     require(payload["source_artifacts"] == {name: {"path": str(path.relative_to(root)), "sha256": context["hashes"][name]} for name, path in context["paths"].items()},
             "Adapter checkpoint source provenance differs")
-    return model, payload
+    # Not part of the saved checkpoint: the source-hash differences accepted while loading it.
+    return model, {**payload, "accepted_source_hash_changes": context["record"].get("accepted_source_hash_changes", [])}
 
 
 def load_adapter_on_base(adapter_checkpoint, base_kind, pattern_id, project_root, *, device="cpu"):
@@ -262,6 +265,7 @@ def evaluate_adapter_on_base(adapter_checkpoint, base_kind, pattern_id, project_
             "evaluation_base": {"base_kind": base_kind, "pattern_id": pattern_id, "fault_probability": record["probability"],
                                 "actual_corrupted_cells": record["counts"]["actual_corrupted_cells"], "realized_fault_rate": record["counts"]["realized_fault_rate"]},
             "same_base": (source.base_kind, source.pattern_id) == (base_kind, pattern_id), "device": str(device),
+            "accepted_source_hash_changes": record.get("accepted_source_hash_changes", []),
             "with_adapter": with_adapter, "without_adapter": without_adapter,
             "accuracy_gain_percentage_points": {name: 100 * (with_adapter[name]["accuracy"] - without_adapter[name]["accuracy"]) for name in loaders},
             "base_num_correct_difference_from_step7": {name: without_adapter[name]["num_correct"] - record["measurements"][name]["num_correct"] for name in loaders}}
@@ -435,7 +439,7 @@ def run_recovery(config, project_root):
         load_adapter_state(model, selected_state["adapter_state_dict"])
         assert_frozen_base(model, original_state)
         require(all(sha256_file(path) == source_hashes[name] for name, path in source_paths.items()), "Recovery changed an input artifact")
-        require(all(sha256_file(root / relative) == digest for relative, digest in source_code.items()), "Recovery source code changed during the run")
+        accepted = record.get("accepted_source_hash_changes", []) + compare_source_hashes(root, source_code, "Recovery source code changed during the run")
         metrics = {"run_id": config.run_id, "config": asdict(config), "base_kind": config.base_kind, "pattern_id": config.pattern_id, "fault_seed": record["seed"], "fault_probability": record["probability"],
                    "actual_corrupted_cells": record["counts"]["actual_corrupted_cells"], "realized_fault_rate": record["counts"]["realized_fault_rate"], "selected_epoch": best_epoch,
                    "before": before, "after": after,
@@ -458,6 +462,7 @@ def run_recovery(config, project_root):
                     "frozen_state": "All base weights, biases, BatchNorm affine parameters, running statistics and counters unchanged. Model stays in eval mode with adapter gradients enabled.",
                     "adapter_storage": "Reliable float32 adapter storage, unmerged residual branches; no adapter faults injected; byte estimate excludes optimizer and archive overhead.",
                     "limitations": "One base and one adapter training seed per run; this run alone measures no unseen-pattern transfer, rank effect, or hardware speed/storage-area.",
+                    "accepted_source_hash_changes": accepted,
                     "source_artifacts_preserved": True, "base_state_preserved_each_epoch": True, "zero_output_identity_verified": True, "adapter_reload_logits_exact": True,
                     "split_sizes": {"train": len(split["train"]), "validation": len(split["validation"]), "test": len(split["test"]["indices"])},
                     "plots": [{"path": str(path.relative_to(root)), "sha256": sha256_file(path)} for path in figures], "elapsed_seconds": time.monotonic() - started}
