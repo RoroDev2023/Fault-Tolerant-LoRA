@@ -1,0 +1,7 @@
+{
+  "layers": [
+    {"name": "example_layer"},
+    {"name": "example_layer_lora_a"},
+    {"name": "example_layer_lora_b"}
+  ]
+}
