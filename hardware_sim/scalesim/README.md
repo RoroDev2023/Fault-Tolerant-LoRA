@@ -1,7 +1,7 @@
 # ResNet-18 → SCALE-Sim GEMM baseline integration
 
 This package is designed to live under `hardware_sim/scalesim/` on a local
-`feat/resnet-scalesim` branch of RoroDev2023/Fault-Tolerant-LoRA.
+`feat/resnet-scalesim` branch of Fault-Tolerant-LoRA.
 
 ## What is verified
 
@@ -19,7 +19,7 @@ This package is designed to live under `hardware_sim/scalesim/` on a local
 ## Required Python environments
 
 Two separate environments may be necessary:
-1. Rahim's project Python: `torch`, `torchvision` installed.
+1. Python: `torch`, `torchvision` installed.
 2. SCALE-Sim editable virtual environment: `scalesim` installed.
 
 Start in the **Fault-Tolerant-LoRA root**, with `scale-sim-v3` as a sibling:
@@ -38,7 +38,7 @@ cat results/hardware_sim/scalesim/comparison.csv
 head -n 8 results/hardware_sim/scalesim/layer_comparison.csv
 ```
 
-If `python` doesn't import `torch`/`torchvision`, use Rahim's local
+If `python` doesn't import `torch`/`torchvision`, use local
 `.venv/bin/python` for the **export** command, assuming its environment has
 been installed. If SCALE-Sim fails to import `scalesim` in its own venv, revisit
 its editable installation.
@@ -71,5 +71,4 @@ caches decoded weights, whether the original weight exists as dense data in
 memory, what bandwidth is used, and the exact reason (if any) faults add cycles.
 Only then modify SCALE-Sim's memory service paths and test new timing behavior.
 
-Avoid editing Rahim's existing source files: experiment provenance includes
-source hashes, and edits to those files can invalidate previous saved runs.
+
