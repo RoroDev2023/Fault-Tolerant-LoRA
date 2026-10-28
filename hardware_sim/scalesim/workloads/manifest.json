@@ -1,7 +1,191 @@
 {
+  "model": "torchvision ResNet-18",
+  "dataset": "CIFAR-10",
+  "input_shape": [
+    1,
+    3,
+    96,
+    96
+  ],
+  "batch_size": 1,
+  "topology_format": "SCALE-Sim v3 GEMM: layer_name,M,N,K,sparsity with trailing comma",
+  "source_checkpoint": null,
   "layers": [
-    {"name": "example_layer"},
-    {"name": "example_layer_lora_a"},
-    {"name": "example_layer_lora_b"}
+    {
+      "name": "conv1",
+      "operation": "conv2d",
+      "M": 2304,
+      "N": 64,
+      "K": 147,
+      "macs": 21676032
+    },
+    {
+      "name": "layer1.0.conv1",
+      "operation": "conv2d",
+      "M": 576,
+      "N": 64,
+      "K": 576,
+      "macs": 21233664
+    },
+    {
+      "name": "layer1.0.conv2",
+      "operation": "conv2d",
+      "M": 576,
+      "N": 64,
+      "K": 576,
+      "macs": 21233664
+    },
+    {
+      "name": "layer1.1.conv1",
+      "operation": "conv2d",
+      "M": 576,
+      "N": 64,
+      "K": 576,
+      "macs": 21233664
+    },
+    {
+      "name": "layer1.1.conv2",
+      "operation": "conv2d",
+      "M": 576,
+      "N": 64,
+      "K": 576,
+      "macs": 21233664
+    },
+    {
+      "name": "layer2.0.conv1",
+      "operation": "conv2d",
+      "M": 144,
+      "N": 128,
+      "K": 576,
+      "macs": 10616832
+    },
+    {
+      "name": "layer2.0.conv2",
+      "operation": "conv2d",
+      "M": 144,
+      "N": 128,
+      "K": 1152,
+      "macs": 21233664
+    },
+    {
+      "name": "layer2.0.downsample.0",
+      "operation": "conv2d",
+      "M": 144,
+      "N": 128,
+      "K": 64,
+      "macs": 1179648
+    },
+    {
+      "name": "layer2.1.conv1",
+      "operation": "conv2d",
+      "M": 144,
+      "N": 128,
+      "K": 1152,
+      "macs": 21233664
+    },
+    {
+      "name": "layer2.1.conv2",
+      "operation": "conv2d",
+      "M": 144,
+      "N": 128,
+      "K": 1152,
+      "macs": 21233664
+    },
+    {
+      "name": "layer3.0.conv1",
+      "operation": "conv2d",
+      "M": 36,
+      "N": 256,
+      "K": 1152,
+      "macs": 10616832
+    },
+    {
+      "name": "layer3.0.conv2",
+      "operation": "conv2d",
+      "M": 36,
+      "N": 256,
+      "K": 2304,
+      "macs": 21233664
+    },
+    {
+      "name": "layer3.0.downsample.0",
+      "operation": "conv2d",
+      "M": 36,
+      "N": 256,
+      "K": 128,
+      "macs": 1179648
+    },
+    {
+      "name": "layer3.1.conv1",
+      "operation": "conv2d",
+      "M": 36,
+      "N": 256,
+      "K": 2304,
+      "macs": 21233664
+    },
+    {
+      "name": "layer3.1.conv2",
+      "operation": "conv2d",
+      "M": 36,
+      "N": 256,
+      "K": 2304,
+      "macs": 21233664
+    },
+    {
+      "name": "layer4.0.conv1",
+      "operation": "conv2d",
+      "M": 9,
+      "N": 512,
+      "K": 2304,
+      "macs": 10616832
+    },
+    {
+      "name": "layer4.0.conv2",
+      "operation": "conv2d",
+      "M": 9,
+      "N": 512,
+      "K": 4608,
+      "macs": 21233664
+    },
+    {
+      "name": "layer4.0.downsample.0",
+      "operation": "conv2d",
+      "M": 9,
+      "N": 512,
+      "K": 256,
+      "macs": 1179648
+    },
+    {
+      "name": "layer4.1.conv1",
+      "operation": "conv2d",
+      "M": 9,
+      "N": 512,
+      "K": 4608,
+      "macs": 21233664
+    },
+    {
+      "name": "layer4.1.conv2",
+      "operation": "conv2d",
+      "M": 9,
+      "N": 512,
+      "K": 4608,
+      "macs": 21233664
+    },
+    {
+      "name": "fc",
+      "operation": "linear",
+      "M": 1,
+      "N": 10,
+      "K": 512,
+      "macs": 5120
+    }
+  ],
+  "gemm_layer_count": 21,
+  "total_multiply_accumulates_per_inference_batch": 333108224,
+  "excluded_operations": [
+    "batch normalization",
+    "activation",
+    "pooling",
+    "residual addition"
   ]
 }

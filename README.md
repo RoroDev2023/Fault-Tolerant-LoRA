@@ -22,6 +22,11 @@ with all base parameters and normalization buffers frozen. Its paired test
 accuracy changed from 79.91% to 91.76%.
 Controlled comparisons and the language-model extension remain future work.
 
+For instructions on running the existing workflows on NYU HPC with Slurm, see
+[docs/NYU_HPC.md](docs/NYU_HPC.md). The cluster batch scripts are templates;
+the Linux/CUDA software environment and NYU-specific resource values must be
+configured for the user's allocation.
+
 ## Completed workflow
 
 1. [Repository scaffold and Python environment](#step-1-repository-scaffold-and-python-environment)

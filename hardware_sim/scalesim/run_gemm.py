@@ -71,11 +71,15 @@ def report_rows(compute_report: Path) -> list[dict[str, str]]:
         rows = list(csv.DictReader(handle))
     normalized = []
     for row in rows:
-        result = dict(row)
-        if " Total Cycles" in result:
-            result["Total Cycles"] = result[" Total Cycles"].strip()
-        if "Prefetch-inclusive cycles" in result:
-            result["Prefetch-inclusive cycles"] = result["Prefetch-inclusive cycles"].strip()
+        result = {
+            key.strip() if isinstance(key, str) else key: value
+            for key, value in row.items()
+        }
+        if "Total Cycles (incl. prefetch)" in result:
+            result["Prefetch-inclusive cycles"] = result["Total Cycles (incl. prefetch)"].strip()
+        for key in ("Total Cycles", "Prefetch-inclusive cycles"):
+            if key in result:
+                result[key] = result[key].strip()
         normalized.append(result)
     return normalized
 
@@ -89,14 +93,33 @@ def tally(rows: Iterable[dict[str, str]]) -> tuple[int, int]:
     return total_cycles, prefetch_cycles
 
 
-def ensure_scalesim() -> None:
+def ensure_scalesim():
     try:
-        import scalesim  # noqa: F401
+        from scalesim.scale_config import scale_config
     except ImportError as exc:  # pragma: no cover - depends on external simulator install
         raise SystemExit(
             "SCALE-Sim is not installed in this environment. Install the upstream scale-sim-v3 package "
             "and retry, or run with --dry-run to inspect the generated job plan."
         ) from exc
+    return scale_config
+
+
+def validate_config(cfg_path: Path, array_size: int, bandwidth: int) -> None:
+    config_type = ensure_scalesim()
+    parsed = config_type()
+    parsed.read_conf_file(str(cfg_path))
+    if not parsed.valid_conf_flag:
+        raise ValueError(f"SCALE-Sim rejected the configuration file: {cfg_path}")
+    if parsed.get_array_dims() != (array_size, array_size):
+        raise ValueError(
+            f"Config {cfg_path} has array dimensions {parsed.get_array_dims()}, expected {(array_size, array_size)}"
+        )
+    if parsed.get_dataflow() != "os":
+        raise ValueError(f"Config {cfg_path} uses {parsed.get_dataflow()!r} dataflow; this sweep expects 'os'")
+    if parsed.get_bandwidths_as_list() != [bandwidth]:
+        raise ValueError(
+            f"Config {cfg_path} has bandwidth {parsed.get_bandwidths_as_list()}, expected {[bandwidth]}"
+        )
 
 
 def maybe_execute_simulation(cfg_path: Path, workload_path: Path, out_dir: Path, layout_path: Path) -> Path:
@@ -118,7 +141,8 @@ def maybe_execute_simulation(cfg_path: Path, workload_path: Path, out_dir: Path,
     return candidates[0]
 
 
-def run_single_case(array_size: int, scenario: str, cfg_path: Path, workload_dir: Path, layout_path: Path, out_root: Path, dry_run: bool):
+def run_single_case(array_size: int, scenario: str, cfg_path: Path, workload_dir: Path, layout_path: Path,
+                    out_root: Path, dry_run: bool, bandwidth: int):
     scenario_info = scenario_rows()[scenario]
     output_dir = out_root / f"pe{array_size}" / SCENARIO_LABELS[scenario]
     if dry_run:
@@ -137,6 +161,7 @@ def run_single_case(array_size: int, scenario: str, cfg_path: Path, workload_dir
         }
 
     ensure_scalesim()
+    validate_config(cfg_path, array_size, bandwidth)
     base_workload = workload_dir / scenario_info["base_workload"]
     lora_workload = workload_dir / scenario_info["lora_workload"]
     if not base_workload.exists():
@@ -221,19 +246,16 @@ def main():
     results = []
     for array_size in array_sizes:
         config_path = args.config.with_name(f"scale_{array_size}x{array_size}_user_bw.cfg")
-        if not config_path.exists() and not args.dry_run:
-            # Keep the config generation local to the simulation layer; this makes the sweep easier to run.
-            from make_fixed_bw_config import build_config
+        if not args.dry_run:
+            from hardware_sim.scalesim.make_fixed_bw_config import build_config
             build_config(array_size, array_size, args.bandwidth, out_path=config_path)
-        elif args.dry_run:
-            config_path = config_path
-            if not config_path.exists():
-                config_path.parent.mkdir(parents=True, exist_ok=True)
 
         for scenario in selected_scenarios:
             if scenario not in scenario_rows():
                 raise ValueError(f"Unsupported scenario {scenario!r}. Supported: {', '.join(sorted(scenario_rows()))}")
-            result = run_single_case(array_size, scenario, config_path, workload_dir, args.layout, args.out, args.dry_run)
+            result = run_single_case(
+                array_size, scenario, config_path, workload_dir, args.layout, args.out, args.dry_run, args.bandwidth
+            )
             results.append(result)
 
     summary = build_summary(results)
