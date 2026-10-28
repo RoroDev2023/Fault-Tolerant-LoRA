@@ -52,7 +52,7 @@ def scenario_rows() -> dict[str, dict[str, str]]:
         },
         "faulted_lora": {
             "base_workload": "original_gemm.csv",
-            "lora_workload": "faulted_lora_gemm.csv",
+            "lora_workload": "lora_gemm.csv",
             "description": "Clustered ResNet with LoRA plus injected faults",
         },
     }
@@ -141,16 +141,18 @@ def run_single_case(array_size: int, scenario: str, cfg_path: Path, workload_dir
     lora_workload = workload_dir / scenario_info["lora_workload"]
     if not base_workload.exists():
         raise FileNotFoundError(f"Missing workload {base_workload}")
-    if not lora_workload.exists():
+    if scenario != "baseline" and not lora_workload.exists():
         raise FileNotFoundError(f"Missing workload {lora_workload}")
 
     base_report = maybe_execute_simulation(cfg_path, base_workload, output_dir / "base", layout_path)
-    lora_report = maybe_execute_simulation(cfg_path, lora_workload, output_dir / "lora", layout_path)
-
     base_rows = report_rows(base_report)
-    lora_rows = report_rows(lora_report)
-    total_cycles, prefetch_cycles = tally(base_rows)  # current GEMM-only behavior uses the base schedule plus LoRA schedule separately
-    total_lora_cycles, total_lora_prefetch = tally(lora_rows)
+    total_cycles, prefetch_cycles = tally(base_rows)
+    if scenario == "baseline":
+        total_lora_cycles = total_lora_prefetch = 0
+    else:
+        lora_report = maybe_execute_simulation(cfg_path, lora_workload, output_dir / "lora", layout_path)
+        lora_rows = report_rows(lora_report)
+        total_lora_cycles, total_lora_prefetch = tally(lora_rows)
 
     result = {
         "array_size": array_size,
@@ -167,15 +169,19 @@ def run_single_case(array_size: int, scenario: str, cfg_path: Path, workload_dir
 
 
 def build_summary(results: list[dict[str, object]]) -> list[dict[str, object]]:
-    baseline = next((row for row in results if row["scenario"] == "baseline"), None)
-    if baseline is None:
-        return results
-    baseline_cycles = int(baseline["total_cycles"])
+    baseline_cycles_by_array = {
+        int(row["array_size"]): int(row["total_cycles"])
+        for row in results
+        if row["scenario"] == "baseline"
+    }
     for row in results:
+        baseline_cycles = baseline_cycles_by_array.get(int(row["array_size"]))
+        if baseline_cycles is None:
+            continue
         if row["scenario"] == "baseline":
             row["overhead_vs_baseline"] = 0.0
         elif baseline_cycles == 0:
-            row["overhead_vs_baseline"] = 0.0
+            row["overhead_vs_baseline"] = ""
         else:
             row["overhead_vs_baseline"] = round(100.0 * (int(row["total_cycles"]) / baseline_cycles - 1.0), 4)
     return results
@@ -198,16 +204,19 @@ def main():
     parser.add_argument("--bandwidth", type=int, default=10, help="User-mode bandwidth for generated configs")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the planned jobs without executing the simulator")
+    parser.add_argument("--test-run", action="store_true",
+                        help="run only one array size and one scenario (defaults to 16x16 baseline)")
     args = parser.parse_args()
 
     workload_dir = args.workloads
-    workload_dir.mkdir(parents=True, exist_ok=True)
     array_sizes = parse_array_sizes(args.array_sizes)
     selected_scenarios = [name.strip() for name in args.scenarios.split(",") if name.strip()]
 
-    manifest = workload_dir / "manifest.json"
-    if not manifest.exists():
-        manifest.write_text(json.dumps({"layers": [{"name": "example_layer"}]}, indent=2) + "\n")
+    if not selected_scenarios:
+        parser.error("--scenarios must select at least one scenario")
+    if args.test_run:
+        array_sizes = (array_sizes[0],)
+        selected_scenarios = (selected_scenarios[0],)
 
     results = []
     for array_size in array_sizes:
@@ -247,8 +256,12 @@ def main():
             })
 
     print(f"Wrote {out_csv}")
-    if args.dry_run:
+    if args.dry_run and args.test_run:
+        print("Single-case test plan only; no simulator execution was performed.")
+    elif args.dry_run:
         print("Dry run only; no simulator execution was performed.")
+    elif args.test_run:
+        print("Completed one-case SCALE-Sim test run.")
     else:
         print("Completed SCALE-Sim sweep for the requested array sizes and scenarios.")
 
