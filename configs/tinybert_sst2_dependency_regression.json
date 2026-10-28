@@ -1,0 +1,21 @@
+{
+  "run_id": "tinybert-sst2-dependency-regression-v1",
+  "step10a_results": "results/tinybert-sst2-clean-seed42",
+  "clean_eval_results": "results/tinybert-sst2-clean-twotest-seed42",
+  "sweep_results": [
+    "results/tinybert-sst2-fault-sweep-seed42"
+  ],
+  "condition_sweep_results": [
+    "results/tinybert-sst2-fault-sweep-linear-high-seed72",
+    "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+  ],
+  "adapter_runs": [
+    "tinybert-sst2-lora-clean-none-none-r4-train42",
+    "tinybert-sst2-lora-clustered-lin-none-r4-train42",
+    "tinybert-sst2-lora-clustered-linemb-none-r4-train42",
+    "tinybert-sst2-lora-faulty-lin-rate11-seed92-r4-train42",
+    "tinybert-sst2-lora-faulty-linemb-rate07-seed1030-r4-train42-mps"
+  ],
+  "device": "mps",
+  "results_root": "results"
+}

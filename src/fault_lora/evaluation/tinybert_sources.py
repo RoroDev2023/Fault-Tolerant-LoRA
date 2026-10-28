@@ -23,6 +23,7 @@ from fault_lora.data.sst2 import SentenceDataset, make_collate, normalize_senten
 from fault_lora.evaluation.clustered_baseline import sha256_file
 from fault_lora.evaluation.fault_checks import require
 from fault_lora.evaluation.sequence_classification import evaluate_sequence_classifier
+from fault_lora.evaluation.source_hashes import compare_source_hashes
 from fault_lora.evaluation.tinybert_baseline import TinyBertConfig, split_sha256
 from fault_lora.models.tinybert import linear_embedding_layout, load_tinybert_checkpoint
 
@@ -81,8 +82,7 @@ def prepare_tinybert_sources(root, step10a_results, *, expected_original_test_ex
             digest = sha256_file(path)
             require(digest == record["sha256"], f"Downloaded file changed: {group}/{name}")
             paths[f"{group}/{name}"], hashes[f"{group}/{name}"] = path, digest
-    for relative, digest in read("source_sha256.json").items():
-        require(sha256_file(root / relative) == digest, f"Step 10a source code changed: {relative}")
+    accepted = compare_source_hashes(root, read("source_sha256.json"), "Step 10a source code changed")
     for name in ("config", "manifest", "metrics", "splits", "status", "verification", "source_sha256", "label_mapping"):
         path = results / f"{name}.json"
         paths[f"step10a_{name}"], hashes[f"step10a_{name}"] = path, sha256_file(path)
@@ -118,7 +118,7 @@ def prepare_tinybert_sources(root, step10a_results, *, expected_original_test_ex
     return SimpleNamespace(
         root=root, results=results, config=config, step10a_config=asdict(config), manifest=manifest, metrics=metrics, split=split,
         model=model, checkpoint=checkpoint, tokenizer=tokenizer, datasets=datasets, test_sets=test_sets,
-        test_names=[validation_name, original_name], paths=paths, hashes=hashes,
+        test_names=[validation_name, original_name], paths=paths, hashes=hashes, accepted_source_hash_changes=accepted,
     )
 
 

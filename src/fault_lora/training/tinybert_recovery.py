@@ -35,6 +35,7 @@ from fault_lora.data.sst2 import SentenceDataset, make_collate, read_sst2
 from fault_lora.evaluation.clustered_baseline import save_torch, sha256_file, write_json
 from fault_lora.evaluation.fault_checks import require, require_state_equal
 from fault_lora.evaluation.fault_sweep import sweep_plan
+from fault_lora.evaluation.source_hashes import compare_source_hashes
 from fault_lora.evaluation.tinybert_clean_eval import environment_record, source_artifacts, verify_source_artifacts, verify_source_code
 from fault_lora.evaluation.tinybert_condition_sweep import ConditionSweepConfig, condition_plan, prepare_condition_sources
 from fault_lora.evaluation.tinybert_fault_sweep import TinyBertSweepConfig, prepare_sweep_sources
@@ -482,7 +483,7 @@ def run_tinybert_recovery(config, project_root):
         load_adapter_state(model, selected["adapter_state_dict"])
         assert_frozen_base(model, original_state)
         require(all(sha256_file(path) == sources.hashes[name] for name, path in sources.paths.items()), "Recovery changed an input artifact")
-        require(all(sha256_file(root / relative) == digest for relative, digest in source_code.items()), "Recovery source code changed during the run")
+        compare_source_hashes(root, source_code, "Recovery source code changed during the run")
         all_windows = [value for item in history for value in item["training_loss_windows"]]
         metrics = {
             "run_id": config.run_id, "config": asdict(config), "base_kind": config.base_kind, "condition": config.condition, "pattern_id": config.pattern_id,

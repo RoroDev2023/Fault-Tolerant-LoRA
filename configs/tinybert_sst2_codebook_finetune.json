@@ -1,0 +1,44 @@
+{
+  "run_id": "tinybert-sst2-codebook-finetune-k16-seed42",
+  "variants": [
+    {
+      "variant_id": "linemb-codebook",
+      "label": "Linear + embeddings, codebooks only",
+      "condition": "linear-and-embeddings",
+      "train_layernorm": false,
+      "train_biases": false
+    },
+    {
+      "variant_id": "linemb-codebook-lnbias",
+      "label": "Linear + embeddings, codebooks + LayerNorm + biases",
+      "condition": "linear-and-embeddings",
+      "train_layernorm": true,
+      "train_biases": true
+    },
+    {
+      "variant_id": "lin-codebook",
+      "label": "Linear only, codebooks only",
+      "condition": "linear-only",
+      "train_layernorm": false,
+      "train_biases": false
+    }
+  ],
+  "source_sweeps": {
+    "linear-and-embeddings": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+    "linear-only": "results/tinybert-sst2-fault-sweep-seed42"
+  },
+  "epochs": 2,
+  "evaluations_per_epoch": 2,
+  "batch_size": 32,
+  "learning_rate": 0.0001,
+  "weight_decay": 0.0,
+  "max_grad_norm": 1.0,
+  "schedule": "cosine-per-step",
+  "model_mode": "eval",
+  "seed": 42,
+  "expected_training_examples": 62349,
+  "device": "mps",
+  "cpu_threads": 4,
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}

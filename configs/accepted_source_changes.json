@@ -54,5 +54,37 @@
     "reason": "Step 11c verification-preserving extension: base kinds retrained-clustered and retrained-faulty are dispatched to training/retrained_bases.py; labels and the fault_counts condition cover them. Existing base kinds behave exactly as before. This version (with the shared hash rule) was recorded by the Step 11a, Step 11b, and dependency-regression records.",
     "date": "2026-10-19",
     "commit": "9fcd59a"
+  },
+  {
+    "path": "src/fault_lora/evaluation/tinybert_baseline.py",
+    "old_sha256": "8a57631815062141b537ffbf6171a3c2a21b01ea9497cdadb0a8f2b04a27c7e8",
+    "new_sha256": "ce1877e50c88d2112d9cc1a28cc01b0701bef63331c0161de16bb8dbf3b7ff09",
+    "reason": "Step 12 preparation (2026-10-28): TinyBERT inputs were copied into this checkout, where four ResNet files differ from what the TinyBERT runs recorded. This file's exact source-hash check was moved onto the shared rule (evaluation/source_hashes.compare_source_hashes), which still requires every other recorded file to match exactly and reports each accepted change. No change to clustering, faults, training, evaluation, or result computation. verify_tinybert_baseline uses the shared rule and returns accepted_source_hash_changes. Recorded by the TinyBERT runs and by ResNet records made after the merge.",
+    "date": "2026-10-28",
+    "commit": "efe01de"
+  },
+  {
+    "path": "src/fault_lora/evaluation/tinybert_clean_eval.py",
+    "old_sha256": "7a96c949894defd2bd8789aad37fd7a648729e83daa537b896afe7b94160100f",
+    "new_sha256": "7f10f3a480bc5d11443ad7c9e6e947fa89476f06c9bffcee668281bbcc926959",
+    "reason": "Step 12 preparation (2026-10-28): TinyBERT inputs were copied into this checkout, where four ResNet files differ from what the TinyBERT runs recorded. This file's exact source-hash check was moved onto the shared rule (evaluation/source_hashes.compare_source_hashes), which still requires every other recorded file to match exactly and reports each accepted change. No change to clustering, faults, training, evaluation, or result computation. verify_source_code uses the shared rule, returns the accepted changes, and prints them as an event. Recorded by the TinyBERT runs and by ResNet records made after the merge.",
+    "date": "2026-10-28",
+    "commit": "9aba796"
+  },
+  {
+    "path": "src/fault_lora/evaluation/tinybert_sources.py",
+    "old_sha256": "49e4491b79af1c80ccd808bca00e7253c6a91f9a90e68fca125c97d8cb9c4b34",
+    "new_sha256": "1be45215339cc77b910d36ffefbd33e807d2a1bcd17642c218977e0e89fcba68",
+    "reason": "Step 12 preparation (2026-10-28): TinyBERT inputs were copied into this checkout, where four ResNet files differ from what the TinyBERT runs recorded. This file's exact source-hash check was moved onto the shared rule (evaluation/source_hashes.compare_source_hashes), which still requires every other recorded file to match exactly and reports each accepted change. No change to clustering, faults, training, evaluation, or result computation. prepare_tinybert_sources uses the shared rule and returns accepted_source_hash_changes. Recorded by the TinyBERT runs and by ResNet records made after the merge.",
+    "date": "2026-10-28",
+    "commit": "9aba796"
+  },
+  {
+    "path": "src/fault_lora/training/tinybert_recovery.py",
+    "old_sha256": "505d045320f7beda7e05bbe13b80b487c4d727094700e8d8e1a142717bdad659",
+    "new_sha256": "1f1e72951cc39066bc93a19bbeeaa511f6a1fdb0b8afd213e04ef17bdb92dd19",
+    "reason": "Step 12 preparation (2026-10-28): TinyBERT inputs were copied into this checkout, where four ResNet files differ from what the TinyBERT runs recorded. This file's exact source-hash check was moved onto the shared rule (evaluation/source_hashes.compare_source_hashes), which still requires every other recorded file to match exactly and reports each accepted change. No change to clustering, faults, training, evaluation, or result computation. The during-run source check uses the shared rule. Recorded by the TinyBERT runs and by ResNet records made after the merge.",
+    "date": "2026-10-28",
+    "commit": "2648f36"
   }
 ]

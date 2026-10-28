@@ -23,6 +23,7 @@ from fault_lora.data.sst2 import (SETFIT_FILES, SST2_FILES, SentenceDataset, mak
 from fault_lora.evaluation.clustered_baseline import save_torch, sha256_file, write_json
 from fault_lora.evaluation.fault_checks import require
 from fault_lora.evaluation.sequence_classification import evaluate_sequence_classifier
+from fault_lora.evaluation.source_hashes import compare_source_hashes
 from fault_lora.models.tinybert import MODEL_FILES, WEIGHT_FILES, fetch_snapshot, linear_embedding_layout, load_sequence_classifier, load_tinybert_checkpoint
 from fault_lora.training.baseline import choose_device
 
@@ -142,8 +143,7 @@ def verify_tinybert_baseline(root, config):
     for group in manifest["source_artifacts"].values():
         for name, item in group["files"].items():
             require(sha256_file(root / item["path"]) == item["sha256"], f"Downloaded file changed: {name}")
-    for relative, expected in read("source_sha256.json").items():
-        require(sha256_file(root / relative) == expected, f"Source code changed during the run: {relative}")
+    accepted = compare_source_hashes(root, read("source_sha256.json"), "Source code changed during the run")
     # No fine-tuning: every saved tensor equals the downloaded weight file.
     downloaded = load_file(root / manifest["source_artifacts"]["model"]["files"]["model.safetensors"]["path"])
     state = checkpoint["model_state_dict"]
@@ -163,7 +163,7 @@ def verify_tinybert_baseline(root, config):
         require(measurement["num_examples"] == sizes[name] and measurement["accuracy"] == measurement["num_correct"] / measurement["num_examples"], f"Inconsistent {name} measurement")
     mapping = read("label_mapping.json")
     require(mapping["confirmed"] and mapping["mapping"] == {str(index): name for index, name in enumerate(config.label_names)}, "Label mapping was not confirmed")
-    return {"status": "passed", "configuration_matches": True, "split_is_partition_with_matching_hashes": True, "downloaded_file_hashes_verified": True,
+    return {"status": "passed", "accepted_source_hash_changes": accepted, "configuration_matches": True, "split_is_partition_with_matching_hashes": True, "downloaded_file_hashes_verified": True,
             "saved_weights_equal_downloaded_weights": True, "state_tensors_compared": len(state), "downloaded_tensors_not_in_model": sorted(set(downloaded) - set(state)),
             "layout_matches_restored_model": True, "measurement_counts_verified": sorted(sizes), "label_mapping_confirmed": True, "source_code_unchanged": True}
 

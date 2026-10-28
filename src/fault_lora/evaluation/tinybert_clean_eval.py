@@ -14,6 +14,7 @@ import torch
 
 from fault_lora.evaluation.clustered_baseline import sha256_file, write_json
 from fault_lora.evaluation.fault_checks import require
+from fault_lora.evaluation.source_hashes import compare_source_hashes
 from fault_lora.evaluation.tinybert_sources import evaluate_splits, make_loaders, prepare_tinybert_sources, test_set_sha256
 from fault_lora.training.baseline import choose_device
 
@@ -54,8 +55,11 @@ def verify_source_artifacts(root, manifest, label):
 
 
 def verify_source_code(root, results_dir, label):
-    for relative, digest in json.loads((results_dir / "source_sha256.json").read_text()).items():
-        require(sha256_file(root / relative) == digest, f"{label}: source code changed: {relative}")
+    """Recorded source hashes must match, or be an exactly listed change (shared rule); return accepted changes."""
+    accepted = compare_source_hashes(root, json.loads((results_dir / "source_sha256.json").read_text()), f"{label}: source code changed")
+    if accepted:
+        print(json.dumps({"event": "accepted_source_hash_changes", "label": label, "paths": sorted({change["path"] for change in accepted})}), flush=True)
+    return accepted
 
 
 def verify_clean_eval(root, config):
