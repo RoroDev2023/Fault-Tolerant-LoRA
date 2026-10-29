@@ -82,8 +82,8 @@
   {
     "path": "src/fault_lora/training/tinybert_recovery.py",
     "old_sha256": "505d045320f7beda7e05bbe13b80b487c4d727094700e8d8e1a142717bdad659",
-    "new_sha256": "1f1e72951cc39066bc93a19bbeeaa511f6a1fdb0b8afd213e04ef17bdb92dd19",
-    "reason": "Step 12 preparation (2026-10-28): TinyBERT inputs were copied into this checkout, where four ResNet files differ from what the TinyBERT runs recorded. This file's exact source-hash check was moved onto the shared rule (evaluation/source_hashes.compare_source_hashes), which still requires every other recorded file to match exactly and reports each accepted change. No change to clustering, faults, training, evaluation, or result computation. The during-run source check uses the shared rule. Recorded by the TinyBERT runs and by ResNet records made after the merge.",
+    "new_sha256": "505943dad9219ef430eced43aa04abc329afda4e1fd2956c03aaa603a44cb748",
+    "reason": "Step 12 preparation (2026-10-28): TinyBERT inputs were copied into this checkout, where four ResNet files differ from what the TinyBERT runs recorded. This file's exact source-hash check was moved onto the shared rule (evaluation/source_hashes.compare_source_hashes), which still requires every other recorded file to match exactly and reports each accepted change. No change to clustering, faults, training, evaluation, or result computation. The during-run source check uses the shared rule. Recorded by the TinyBERT runs and by ResNet records made after the merge. Superseded (2026-10-29) by the Step 12c dispatch hooks; the version recorded by the Step 10d/10e runs now points to the current file. Step 12c (2026-10-29): dispatch-only hooks. The base kinds retrained-clustered and retrained-faulty are passed to the new training/tinybert_retrained_recovery.py; an adapter placement hook (attach_adapters) and saved-configuration loader (recovery_config) let Step 12c configurations, which add adapter_placement, use the same run, reload, transfer, and verification code. For every earlier configuration (no adapter_placement field, base kinds clean/clustered/faulty) training, evaluation, adapters, and results are unchanged.",
     "date": "2026-10-28",
     "commit": "2648f36"
   },
@@ -94,5 +94,13 @@
     "date": "2026-10-28",
     "commit": "64a5a20",
     "reason": "Step 12a rerun: added the declared monotone codebook parameterization (c0 + cumsum(softplus(g))) behind a new config field `parameterization` (default `direct`, the behavior of the stopped run), a per-tensor gap report, and the initialization-error record. Recorded only by the stopped Step 12a run (tinybert-sst2-codebook-finetune-k16-seed42), which is kept as a record."
+  },
+  {
+    "path": "src/fault_lora/training/tinybert_recovery.py",
+    "old_sha256": "1f1e72951cc39066bc93a19bbeeaa511f6a1fdb0b8afd213e04ef17bdb92dd19",
+    "new_sha256": "505943dad9219ef430eced43aa04abc329afda4e1fd2956c03aaa603a44cb748",
+    "date": "2026-10-29",
+    "commit": "64a5a20",
+    "reason": "Step 12c (2026-10-29): dispatch-only hooks. The base kinds retrained-clustered and retrained-faulty are passed to the new training/tinybert_retrained_recovery.py; an adapter placement hook (attach_adapters) and saved-configuration loader (recovery_config) let Step 12c configurations, which add adapter_placement, use the same run, reload, transfer, and verification code. For every earlier configuration (no adapter_placement field, base kinds clean/clustered/faulty) training, evaluation, adapters, and results are unchanged. Recorded by the Step 12 regression run, Step 12a, and Step 12b."
   }
 ]

@@ -1,0 +1,624 @@
+{
+  "matrix_id": "tinybert-sst2-lora12c-matrix",
+  "recipe": {
+    "rank": 4,
+    "alpha": 4.0,
+    "epochs": 2,
+    "evaluations_per_epoch": 2,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "max_grad_norm": 1.0,
+    "schedule": "cosine-per-step",
+    "expected_training_examples": 62349,
+    "loss_window_steps": 100,
+    "device": "mps",
+    "cpu_threads": 4
+  },
+  "runs": [
+    {
+      "adapter_placement": "linear",
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 44
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "clean",
+      "condition": null,
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-fault-sweep-linear-emb-seed1000",
+      "seed": 44
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 44
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-clustered",
+      "condition": "linear-and-embeddings",
+      "pattern_id": null,
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 44
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1025",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1026",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate06-seed1027",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1030",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1030",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1030",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1030",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1031",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate07-seed1032",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1035",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1036",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 42
+    },
+    {
+      "adapter_placement": "linear",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    },
+    {
+      "adapter_placement": "linear+emb",
+      "base_kind": "retrained-faulty",
+      "condition": "linear-and-embeddings",
+      "pattern_id": "rate08-seed1037",
+      "source_sweep_results": "results/tinybert-sst2-retrained-fault-sweep-seed1000",
+      "seed": 43
+    }
+  ],
+  "transfers": [
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate06-seed1025"
+    },
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate06-seed1026"
+    },
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate06-seed1027"
+    },
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate07-seed1030"
+    },
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate07-seed1031"
+    },
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate07-seed1032"
+    },
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate08-seed1035"
+    },
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate08-seed1036"
+    },
+    {
+      "adapter_run": 6,
+      "pattern_id": "rate08-seed1037"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate06-seed1025"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate06-seed1026"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate06-seed1027"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate07-seed1030"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate07-seed1031"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate07-seed1032"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate08-seed1035"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate08-seed1036"
+    },
+    {
+      "adapter_run": 8,
+      "pattern_id": "rate08-seed1037"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate06-seed1025"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate06-seed1026"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate06-seed1027"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate07-seed1030"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate07-seed1031"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate07-seed1032"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate08-seed1035"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate08-seed1036"
+    },
+    {
+      "adapter_run": 10,
+      "pattern_id": "rate08-seed1037"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate06-seed1025"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate06-seed1026"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate06-seed1027"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate07-seed1030"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate07-seed1031"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate07-seed1032"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate08-seed1035"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate08-seed1036"
+    },
+    {
+      "adapter_run": 7,
+      "pattern_id": "rate08-seed1037"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate06-seed1025"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate06-seed1026"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate06-seed1027"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate07-seed1030"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate07-seed1031"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate07-seed1032"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate08-seed1035"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate08-seed1036"
+    },
+    {
+      "adapter_run": 9,
+      "pattern_id": "rate08-seed1037"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate06-seed1025"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate06-seed1026"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate06-seed1027"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate07-seed1030"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate07-seed1031"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate07-seed1032"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate08-seed1035"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate08-seed1036"
+    },
+    {
+      "adapter_run": 11,
+      "pattern_id": "rate08-seed1037"
+    }
+  ],
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}

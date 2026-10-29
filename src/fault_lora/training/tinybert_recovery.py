@@ -11,7 +11,10 @@ and the model stays in eval() mode, which also disables BERT dropout.
 Bases come from a verified TinyBERT fault sweep: the Step 10b sweep or a Step
 10c condition sweep. `condition` names the encoding: "linear-only" (Step 10b
 and Condition A) or "linear-and-embeddings" (Condition B). A clean base has no
-condition.
+condition. Step 12c adds the base kinds "retrained-clustered" and
+"retrained-faulty" (the Step 12a encoding and Step 12b patterns) and an adapter
+placement that also covers the embeddings; both live in
+`training/tinybert_retrained_recovery.py`, and this module only dispatches to it.
 """
 
 import argparse
@@ -56,6 +59,30 @@ SELECTION = "selection"
 
 def recovery_run_id(base_kind, condition, pattern_id, rank, seed):
     return f"tinybert-sst2-lora-{base_kind}-{CONDITION_TAGS[condition]}-{pattern_id or 'none'}-r{rank}-train{seed}"
+
+
+def recovery_config(values):
+    """A saved configuration as its class: Step 12c configurations carry adapter_placement."""
+    if "adapter_placement" in values:
+        from fault_lora.training.tinybert_retrained_recovery import TinyBertRetrainedRecoveryConfig
+        return TinyBertRetrainedRecoveryConfig(**values)
+    return TinyBertRecoveryConfig(**values)
+
+
+def attach_adapters(model, config):
+    """Linear adapters as before; Step 12c's "linear+emb" placement also wraps every nn.Embedding."""
+    if getattr(config, "adapter_placement", "linear") == "linear":
+        return attach_linear_lora(model, config.rank, config.alpha)
+    from fault_lora.models.tinybert_embedding_lora import attach_linear_embedding_lora
+    return attach_linear_embedding_lora(model, config.rank, config.alpha)
+
+
+def expected_adapter_weights(model_config, config):
+    fresh = build_tinybert(model_config)
+    names = linear_weight_names(fresh)
+    if getattr(config, "adapter_placement", "linear") != "linear":
+        names += [f"{name}.weight" for name, module in fresh.named_modules() if isinstance(module, nn.Embedding)]
+    return names
 
 
 @dataclass
@@ -137,6 +164,9 @@ def load_sweep(root, config):
 
 def prepare_recovery_sources(root, config):
     """Verify the sweep chain and the configured base; return what training and evaluation need."""
+    if config.base_kind.startswith("retrained-"):
+        from fault_lora.training.tinybert_retrained_recovery import prepare_retrained_sources
+        return prepare_retrained_sources(root, config)
     condition, plan, records, references, sources, _, encoding = load_sweep(root, config)
     require(config.base_kind == "clean" or config.condition == condition, f"Configured condition {config.condition} differs from the sweep's {condition}")
     splits = list(sources.datasets)
@@ -168,7 +198,7 @@ def build_recovery_base(config, context):
         require(set(state) == set(encoding["clustered_tensors"]) | set(encoding["untouched_state"]), "Clean checkpoint and encoding describe different tensors")
         require(all(torch.equal(state[name], value) for name, value in encoding["untouched_state"].items()), "Encoding was not made from this clean checkpoint")
         return state
-    if config.base_kind == "clustered":
+    if config.base_kind in ("clustered", "retrained-clustered"):
         return decode_state(encoding)
     return apply_fault_pattern(encoding, context["pattern"])
 
@@ -216,7 +246,7 @@ def restore_adapter(payload, config, root, device):
     require(payload["model_config"] == sources.checkpoint["model_config"] and payload["classes"] == sources.checkpoint["classes"], "Architecture or classes differ")
     state = build_recovery_base(config, context)
     model = build_tinybert(sources.checkpoint["model_config"], state)
-    layout = attach_linear_lora(model, config.rank, config.alpha)
+    layout = attach_adapters(model, config)
     require(layout == payload["adapter_layout"], "Adapter layout differs from the saved checkpoint")
     load_adapter_state(model, payload["adapter_state_dict"])
     return model.to(device).eval(), {**context, "base_state": state, "config": config}
@@ -226,7 +256,7 @@ def load_tinybert_recovered_model(checkpoint_path, project_root, *, device="cpu"
     """Reconstruct the exact base the adapter was trained on, then load the adapter."""
     root = Path(project_root).resolve()
     payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    model, context = restore_adapter(payload, TinyBertRecoveryConfig(**payload["config"]), root, device)
+    model, context = restore_adapter(payload, recovery_config(payload["config"]), root, device)
     sources = context["sources"]
     require(payload["source_artifacts"] == source_artifacts(root, sources.paths, sources.hashes), "Adapter checkpoint source provenance differs")
     return model, payload
@@ -241,7 +271,7 @@ def evaluate_tinybert_adapter_on_base(adapter_checkpoint, base_kind, pattern_id,
     """
     root, device = Path(project_root).resolve(), choose_device(device)
     payload = torch.load(adapter_checkpoint, map_location="cpu", weights_only=True)
-    source = TinyBertRecoveryConfig(**payload["config"])
+    source = recovery_config(payload["config"])
     config = replace(source, base_kind=base_kind, pattern_id=pattern_id, source_sweep_results=source_sweep_results or source.source_sweep_results,
                      condition=None if base_kind == "clean" else source.condition)
     model, context = restore_adapter(payload, config, root, device)
@@ -368,7 +398,7 @@ def run_tinybert_recovery(config, project_root):
         source_code = {str(path.relative_to(root)): sha256_file(path) for path in files}
         write_json(results_dir / "source_sha256.json", source_code)
         write_json(results_dir / "test_sets.json", sources.test_sets)
-        if config.base_kind == "faulty":
+        if config.base_kind in ("faulty", "retrained-faulty"):
             write_json(results_dir / "fault_counts.json", record["counts"])
         environment = {**environment_record(device, config.cpu_threads, ("matplotlib",)),
                        "reproducibility": "Seeded adapter initialization and data order; bitwise replay across hardware, thread counts, or library versions is not guaranteed."}
@@ -379,8 +409,8 @@ def run_tinybert_recovery(config, project_root):
         probe = synthetic_token_batch(sources.checkpoint["model_config"], seed=0)
         with torch.no_grad():
             initial_logits = model(**probe).logits
-        layout = attach_linear_lora(model, config.rank, config.alpha)
-        require([item["name"] + ".weight" for item in layout] == linear_weight_names(build_tinybert(sources.checkpoint["model_config"])), "Adapters are not on exactly the nn.Linear layers")
+        layout = attach_adapters(model, config)
+        require([item["name"] + ".weight" for item in layout] == expected_adapter_weights(sources.checkpoint["model_config"], config), "Adapters are not on exactly the declared layers")
         with torch.no_grad():
             require(torch.equal(initial_logits, model(**probe).logits), "Zero-output adapters changed initial logits")
         model.to(device)
@@ -531,4 +561,4 @@ def main(project_root):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
-    run_tinybert_recovery(TinyBertRecoveryConfig(**json.loads(args.config.read_text())), project_root)
+    run_tinybert_recovery(recovery_config(json.loads(args.config.read_text())), project_root)
