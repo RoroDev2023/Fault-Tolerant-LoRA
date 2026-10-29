@@ -1,0 +1,17 @@
+{
+  "model": "torchvision ResNet-18 LoRA adapters",
+  "dataset": "CIFAR-10",
+  "input_shape": [
+    1,
+    3,
+    96,
+    96
+  ],
+  "batch_size": 1,
+  "rank": 4,
+  "target_names": null,
+  "adapter_target_count": 21,
+  "gemm_layer_count": 42,
+  "total_multiply_accumulates_per_inference_batch": 12618792,
+  "topology_format": "SCALE-Sim v3 GEMM: layer_name,M,N,K,sparsity with trailing comma"
+}

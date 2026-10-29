@@ -121,6 +121,22 @@ modeled operands, and non-GEMM operations are excluded. It is a single-image
 inference topology by default, not the training batch's dataflow or latency.
 The clustered/faulted model weights do not change these GEMM shapes.
 
+## LoRA adapter workload
+
+Adapter scenarios also require `workloads/lora_gemm.csv`. Generate it from the
+checked-in ResNet and LoRA configs in the project environment with PyTorch
+installed:
+
+```bash
+python -m hardware_sim.scalesim.extract_lora_gemm
+```
+
+By default, the exporter writes both adapter operations (A and B) for every
+configured Conv2d/Linear target at rank 4. The clustered weights retain the
+ResNet GEMM dimensions, so the runner sums the baseline ResNet GEMMs and the
+adapter GEMMs serially. It does not model clustering compression or adapter
+numerical values.
+
 ## Important assumptions
 
 - This is a hardware what-if layer, not a replacement for the model-level accuracy checks.

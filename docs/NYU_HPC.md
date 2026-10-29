@@ -162,10 +162,20 @@ python -m hardware_sim.scalesim.extract_resnet_gemm \
   --batch-size 1
 ```
 
-For adapter scenarios, the runner also needs `lora_gemm.csv`; the baseline
-workload alone does not provide that LoRA GEMM workload. Set `SCALESIM_LAYOUT`
-to a valid layout from your SCALE-Sim checkout. The job validates its input
-files and simulator import before starting.
+For clustered+LoRA scenarios, generate the adapter topology from the checked-in
+ResNet and LoRA configs on a machine with the project PyTorch environment:
+
+```bash
+python -m hardware_sim.scalesim.extract_lora_gemm
+```
+
+This writes `hardware_sim/scalesim/workloads/lora_gemm.csv`, containing the A
+and B adapter GEMMs for each configured Conv2d/Linear target. Transfer this
+file along with the project files to Torch. The runner combines those adapter
+cycles serially with the baseline ResNet GEMMs; it does not model clustering
+compression or adapter numerical values. Set `SCALESIM_LAYOUT` to a valid
+layout from your SCALE-Sim checkout. The job validates its input files and
+simulator import before starting.
 
 By default, the script runs a single test case (16x16 baseline), not the full
 matrix:
@@ -187,7 +197,7 @@ After confirming the one-case result, request the full sweep:
 ```bash
 export SCALESIM_MODE=sweep
 export SCALESIM_ARRAY_SIZES=16,64,128
-export SCALESIM_SCENARIOS=baseline,clustered_lora,faulted_lora
+export SCALESIM_SCENARIOS=clustered_lora
 sbatch ... hpc/slurm/scalesim_job.sbatch
 ```
 
