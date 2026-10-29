@@ -86,5 +86,13 @@
     "reason": "Step 12 preparation (2026-10-28): TinyBERT inputs were copied into this checkout, where four ResNet files differ from what the TinyBERT runs recorded. This file's exact source-hash check was moved onto the shared rule (evaluation/source_hashes.compare_source_hashes), which still requires every other recorded file to match exactly and reports each accepted change. No change to clustering, faults, training, evaluation, or result computation. The during-run source check uses the shared rule. Recorded by the TinyBERT runs and by ResNet records made after the merge.",
     "date": "2026-10-28",
     "commit": "2648f36"
+  },
+  {
+    "path": "src/fault_lora/training/tinybert_codebook_finetune.py",
+    "old_sha256": "5c70bfcec9c32e603efb21059c9ff554965e926730188bdc96abcea74da75528",
+    "new_sha256": "1c151cdc9fc7a3eaf5e9886d757c05759a040feedc55f346bbf30f76523b46aa",
+    "date": "2026-10-28",
+    "commit": "64a5a20",
+    "reason": "Step 12a rerun: added the declared monotone codebook parameterization (c0 + cumsum(softplus(g))) behind a new config field `parameterization` (default `direct`, the behavior of the stopped run), a per-tensor gap report, and the initialization-error record. Recorded only by the stopped Step 12a run (tinybert-sst2-codebook-finetune-k16-seed42), which is kept as a record."
   }
 ]

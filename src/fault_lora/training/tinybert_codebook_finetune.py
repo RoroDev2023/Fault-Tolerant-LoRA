@@ -45,6 +45,32 @@ SWEEPS = {"linear-and-embeddings": "results/tinybert-sst2-fault-sweep-linear-emb
 EVALUATION_FIELDS = ["model", "split", "num_examples", "num_correct", "accuracy", "cross_entropy_loss", "gap_to_clean_percentage_points"]
 
 
+class MonotoneCodebook(nn.Module):
+    """codebook = c0 + [0, cumsum(softplus(g))]: strictly increasing by construction.
+
+    Initialized from a sorted codebook through the inverse softplus of its gaps
+    (computed in float64), so the starting values equal it to float32 rounding.
+    """
+
+    def __init__(self, codebook):
+        super().__init__()
+        require(codebook.ndim == 1 and codebook.numel() >= 2 and bool((codebook[1:] > codebook[:-1]).all()), "Monotone codebooks need a strictly increasing start")
+        gaps = (codebook[1:] - codebook[:-1]).double()
+        self.c0 = nn.Parameter(codebook[:1].detach().clone())
+        self.g = nn.Parameter(torch.log(torch.expm1(gaps)).to(codebook.dtype))
+
+    def forward(self):
+        return torch.cat([self.c0, self.c0 + torch.cumsum(F.softplus(self.g), 0)])
+
+
+def make_monotone(layer):
+    """Replace a layer's codebook Parameter with a MonotoneCodebook; `layer.codebook` stays readable."""
+    original = layer.codebook.detach().clone()
+    del layer._parameters["codebook"]
+    layer.monotone = MonotoneCodebook(original)
+    return (layer.monotone() - original).abs().max().item()
+
+
 class CodebookEmbedding(nn.Module):
     """An nn.Embedding whose table exists only as codebook[indices]."""
 
@@ -66,8 +92,26 @@ class CodebookEmbedding(nn.Module):
         return F.embedding(inputs, self.weight(), base.padding_idx, None, base.norm_type, base.scale_grad_by_freq, False)
 
 
-def attach_tinybert_codebooks(model, encoding):
-    """Wrap exactly the encoding's clustered tensors (Linear and Embedding weights)."""
+def _codebook(layer):
+    return layer.monotone() if "monotone" in layer._modules else layer._parameters["codebook"]
+
+
+def _weight(layer):
+    return _codebook(layer)[layer.indices.long()]
+
+
+for _cls in (CodebookLayer, CodebookEmbedding):
+    # Read-only view used by ordering checks and payloads; Parameters are c0/g when monotone.
+    _cls.codebook_values = property(_codebook)
+
+
+def attach_tinybert_codebooks(model, encoding, *, parameterization="direct"):
+    """Wrap exactly the encoding's clustered tensors (Linear and Embedding weights).
+
+    parameterization "monotone" stores each codebook as c0 + cumsum(softplus(g));
+    the returned dict maps module names to layers, and `init_error` records the
+    largest |starting value - saved codebook| per tensor.
+    """
     layers = {}
     for name in sorted(encoding["clustered_tensors"]):
         require(name.endswith(".weight"), f"Unexpected clustered tensor: {name}")
@@ -77,9 +121,22 @@ def attach_tinybert_codebooks(model, encoding):
         base = getattr(parent, child)
         record = encoding["clustered_tensors"][name]
         layer = CodebookEmbedding(base, record) if isinstance(base, nn.Embedding) else CodebookLayer(base, record)
+        if parameterization == "monotone":
+            layer.init_error = make_monotone(layer)
+            layer.weight = (lambda layer: lambda: _weight(layer))(layer)
         setattr(parent, child, layer)
         layers[module_name] = layer
+    require(parameterization in ("direct", "monotone"), "Unknown codebook parameterization")
     return layers
+
+
+def codebook_tensor(layer):
+    return layer.codebook_values
+
+
+def tinybert_effective_state(model, layers):
+    """Original state names; monotone c0/g parameters are not model state."""
+    return {name: value for name, value in effective_state(model, layers).items() if ".monotone." not in name}
 
 
 def set_tinybert_trainable(model, layers, variant):
@@ -87,8 +144,12 @@ def set_tinybert_trainable(model, layers, variant):
     model.requires_grad_(False)
     names = []
     for module_name, layer in layers.items():
-        layer.codebook.requires_grad_(True)
-        names.append(f"{module_name}.codebook")
+        if "monotone" in layer._modules:
+            layer.monotone.requires_grad_(True)
+            names += [f"{module_name}.monotone.c0", f"{module_name}.monotone.g"]
+        else:
+            layer.codebook.requires_grad_(True)
+            names.append(f"{module_name}.codebook")
     for name, parameter in model.named_parameters():
         module_name = name.rpartition(".")[0]
         is_layernorm = isinstance(model.get_submodule(module_name.removesuffix(".base") if module_name.endswith(".base") else module_name), nn.LayerNorm)
@@ -115,6 +176,7 @@ class TinyBertCodebookConfig:
     max_grad_norm: float = 1.0
     schedule: str = "cosine-per-step"
     model_mode: str = "eval"
+    parameterization: str = "direct"
     seed: int = 42
     expected_training_examples: int = 62349
     device: str = "mps"
@@ -141,6 +203,8 @@ class TinyBertCodebookConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (value <= 0 if positive else value < 0):
                 raise ValueError(f"Invalid {name}")
+        if self.parameterization not in ("direct", "monotone"):
+            raise ValueError("parameterization must be direct or monotone")
         if self.schedule != "cosine-per-step" or self.model_mode != "eval":
             raise ValueError("Only the declared cosine-per-step schedule and eval() mode are supported")
         if self.device not in ("cpu", "mps", "cuda", "auto"):
@@ -164,22 +228,24 @@ def train_variant(config, variant, context, training, loaders, device, directory
         torch.mps.manual_seed(config.seed)
     sources, encoding, record = context["sources"], context["encoding"], context["record"]
     model = build_tinybert(sources.checkpoint["model_config"], decode_state(encoding))
-    layers = attach_tinybert_codebooks(model, encoding)
+    layers = attach_tinybert_codebooks(model, encoding, parameterization=config.parameterization)
+    init_error = {f"{name}.weight": getattr(layer, "init_error", 0.0) for name, layer in layers.items()}
     trainable = set_tinybert_trainable(model, layers, variant)
     model.to(device).eval()
     snapshot = frozen_snapshot(model)
     original_indices = {name: layer.indices.detach().cpu().clone() for name, layer in layers.items()}
     counts = {"trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad), "trainable_tensors": len(trainable),
-              "codebook_values": sum(layer.codebook.numel() for layer in layers.values()), "clustered_tensors": len(layers)}
+              "codebook_values": sum(codebook_tensor(layer).numel() for layer in layers.values()), "clustered_tensors": len(layers),
+              "parameterization": config.parameterization, "max_initialization_error": max(init_error.values())}
     directory.mkdir(parents=True)
     selection_loader = loaders[SELECTION]
     initial = evaluate_splits(model, {SELECTION: selection_loader}, device)[SELECTION]
     require(initial["num_correct"] == record["measurements"][SELECTION]["num_correct"], "Epoch-0 codebook model differs from the clustered sweep reference")
 
     def payload(point, selection):
-        state = effective_state(model, layers)
+        state = tinybert_effective_state(model, layers)
         return {"format_version": 1, "kind": "tinybert_codebook_finetune_state", "variant": variant, "epoch": point, "selection_metrics": selection, "config": asdict(config), **source_info,
-                "codebooks": {f"{name}.weight": layer.codebook.detach().cpu().clone() for name, layer in layers.items()},
+                "codebooks": {f"{name}.weight": codebook_tensor(layer).detach().cpu().clone() for name, layer in layers.items()},
                 "untouched_state": {name: value for name, value in state.items() if name not in {f"{module}.weight" for module in layers}}}
 
     save_torch(directory / "best.pt", payload(0.0, initial))
@@ -219,7 +285,7 @@ def train_variant(config, variant, context, training, loaders, device, directory
                 if (selection["accuracy"], -selection["cross_entropy_loss"]) > best_key:
                     best_key, best_point = (selection["accuracy"], -selection["cross_entropy_loss"]), point
                     save_torch(directory / "best.pt", payload(point, selection))
-                order = codebook_order({name: layer.codebook for name, layer in layers.items()})
+                order = codebook_order({name: codebook_tensor(layer) for name, layer in layers.items()})
                 history.append({"epoch": point, "learning_rate_after": optimizer.param_groups[0]["lr"], "training": {"num_examples": segment["count"], "accuracy": segment["correct"] / segment["count"],
                                 "cross_entropy_loss": segment["loss"] / segment["count"]}, SELECTION: selection, "frozen_state_verified": True, "indices_unchanged": True,
                                 "codebooks_strictly_increasing": all(item["strictly_increasing"] for item in order.values()), "seconds": time.monotonic() - started})
@@ -229,7 +295,8 @@ def train_variant(config, variant, context, training, loaders, device, directory
     save_torch(directory / "last.pt", payload(float(config.epochs), history[-1][SELECTION]))
     selected = torch.load(directory / "best.pt", map_location="cpu", weights_only=True)
     require(selected["epoch"] == best_point, "Selected checkpoint differs from the selection")
-    return {"variant": variant, "selected_epoch": best_point, "selected": selected, "history": history, "trainable": trainable, "counts": counts, "model": model, "layers": layers}
+    return {"variant": variant, "selected_epoch": best_point, "selected": selected, "history": history, "trainable": trainable, "counts": counts, "model": model, "layers": layers,
+            "initialization_error": init_error}
 
 
 def run_tinybert_codebook_finetune(config, project_root):
@@ -271,6 +338,16 @@ def run_tinybert_codebook_finetune(config, project_root):
         order = {key: codebook_order(item["selected"]["codebooks"]) for key, item in results.items()}
         violations = {key: {name: {k: report[name][k] for k in ("adjacent_violations", "inverted_pairs")} for name in report if not report[name]["strictly_increasing"]} for key, report in order.items()}
         write_json(results_dir / "codebook_order.json", {"selected": order, "violations": violations})
+        gaps = {}
+        for key, item in results.items():
+            source = contexts[item["variant"]["condition"]]["encoding"]["clustered_tensors"]
+            gaps[key] = {name: {"before": (source[name]["codebook"][1:] - source[name]["codebook"][:-1]).min().item(),
+                                "after": (value[1:] - value[:-1]).min().item(), "initialization_error": item["initialization_error"][name]}
+                         for name, value in item["selected"]["codebooks"].items()}
+            for report in gaps[key].values():
+                report["below_1e-4"] = report["after"] < 1e-4
+        write_json(results_dir / "codebook_gaps.json", {"threshold": 1e-4, "variants": gaps,
+                                                        "collapsed": {key: sorted(name for name, report in value.items() if report["below_1e-4"]) for key, value in gaps.items()}})
         if any(violations.values()):
             # Keep the run and its trained states; never re-sort or remap cells, and save no baseline encoding.
             write_json(results_dir / "status.json", {"status": "stopped_codebook_order_violation", "violations": {k: v for k, v in violations.items() if v}})

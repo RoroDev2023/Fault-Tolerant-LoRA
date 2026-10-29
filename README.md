@@ -2903,6 +2903,432 @@ The full offline suite passes **122 tests**.
 - **BatchNorm recalibration settings:** recalibration used the Step 9b settings,
   which are not tuned for an already re-estimated baseline.
 
+## Step 12a: codebook-only retraining of the clustered TinyBERT
+
+**Purpose:** do for TinyBERT what Step 11a did for ResNet-18. The clustered
+encodings are improved without changing a single stored cell: every weight
+keeps its cluster index, and only codebook values are fine-tuned. Step 12b then
+measures fault damage from this closer-to-clean baseline. **No faults were
+injected in this step.**
+
+### Preparation (commit `64a5a20`)
+
+- **Inputs:** the TinyBERT results, checkpoints, and data of Steps 10a–10e were
+  copied byte-identically from the `tinybert-sst2` worktree into this checkout.
+  The sibling worktree was not changed. Four TinyBERT exact source-hash checks
+  now use the shared rule, with reasoned entries in
+  `configs/accepted_source_changes.json`.
+- **Regression run:** an evaluation-only run,
+  `tinybert-sst2-dependency-regression-v1`, passed all 15 verifiers on MPS. It
+  reproduced every saved count exactly: clean, both clustered encodings, two
+  faulty bases, and five adapters.
+- **Embedding LoRA:** `EmbeddingLoRALayer` and `attach_linear_embedding_lora`
+  were added for later Step 12 work. Linear adapters and their seeded
+  initialization are unchanged.
+
+### Method
+
+- **Sources:** the Condition B encoding (Step 10c; Linear + embeddings, 29
+  tensors, fingerprint `c175667d…`) and the Linear-only encoding (Step 10b; 26
+  tensors, `c6a21291…`).
+- **Shared weights:** every clustered Linear and Embedding weight is computed
+  as `codebook[indices]` in the forward pass. Indices are a fixed buffer. Before
+  training, the wrapped model had to reproduce the clustered selection count
+  exactly, and it did.
+- **Variants:**
+
+  | Variant | Encoding | Trainable | Parameters |
+  | --- | --- | --- | ---: |
+  | `linemb-codebook` (main) | Condition B | the 29 codebooks only | **464** (29 × 16) |
+  | `linemb-codebook-lnbias` (ablation) | Condition B | codebooks + LayerNorm + all biases | **17,434** (464 + 5,616 + 11,354) |
+  | `lin-codebook` (ablation) | Linear only | the 26 codebooks only | **416** (26 × 16) |
+
+  Everything else stays frozen and is checked for exact equality at every
+  evaluation, together with every index. Codebooks, LayerNorm, and biases are
+  assumed to be reliable memory.
+- **Recipe:** the 62,349-example LoRA training split; 2 epochs; batch 32;
+  AdamW, learning rate 1e-4, weight decay 0; cosine schedule per step; gradient
+  clipping 1.0; `eval()` mode (dropout off; LayerNorm has no running
+  statistics); seed 42; MPS.
+- **Selection:** the 5,000-example selection split, every half epoch. The rule
+  was highest selection accuracy, then lowest selection cross-entropy, keeping
+  the earlier point on exact ties. Epoch 0 (the clustered encoding) competed.
+  Each test set was evaluated once per model, after every variant was selected
+  and saved. The two test sets are never pooled.
+- **Ordering check:** after selection every codebook must stay **strictly
+  increasing**, because a one-level fault must land on a neighboring value.
+  Codebooks are never re-sorted and indices never remapped.
+
+### First run: stopped by the ordering check
+
+The first run, `tinybert-sst2-codebook-finetune-k16-seed42`, trained the 16
+codebook values directly. **It stopped by design.** The selected codebooks of
+all three variants broke strict order:
+
+- `linemb-codebook-lnbias`: 7 tensors;
+- `linemb-codebook`: 8 tensors;
+- `lin-codebook`: 9 tensors.
+
+The broken tensors were layer 2's intermediate weight, four to six layer-3
+tensors, the pooler, and the classifier. As the rule requires, no encoding was
+saved, nothing was re-sorted, and no test set was evaluated. The directory is
+kept as a record.
+
+### Monotone rerun
+
+The rerun, `tinybert-sst2-codebook-finetune-monotone-k16-seed42`, uses the same
+configuration with one new field, `parameterization: "monotone"`. Each codebook
+is stored as
+
+`codebook = c0 + [0, cumsum(softplus(g))]`,
+
+which is strictly increasing by construction. The trainable parameters are
+`c0` (1 value) and `g` (15 gaps), so the parameter counts above are unchanged.
+`g` starts at the inverse softplus of the sorted codebook's gaps, computed in
+float64. The largest starting error over all tensors is 9.5e-7 (float32
+rounding).
+
+The field's default, `direct`, is the stopped run's behavior, so that run's
+configuration still verifies. The file's hash had been recorded by the stopped
+run, so the change has a reasoned entry in the decision file.
+
+### Measured results
+
+Selection correct counts per half epoch. These are selection-only, because the
+checkpoint was fine-tuned on the full train split:
+
+| Variant | 0 | 0.5 | 1.0 | 1.5 | 2.0 | Selected |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `linemb-codebook` | 4,707 | 4,725 | 4,723 | 4,728 | 4,728 | **1.5** |
+| `linemb-codebook-lnbias` | 4,707 | 4,742 | 4,746 | 4,748 | 4,749 | **2.0** |
+| `lin-codebook` | 4,763 | 4,753 | 4,760 | 4,761 | 4,762 | **0** |
+
+- **Main variant:** epochs 1.5 and 2.0 tied on accuracy. Epoch 1.5 won on
+  cross-entropy (0.1551 vs 0.1552).
+- **`lin-codebook`:** selection cross-entropy fell from 0.1944 to 0.1462, but
+  accuracy never passed epoch 0's 4,763, so the accuracy-first rule kept epoch
+  0. **The Linear-only "retrained" encoding is therefore the Step 10b encoding,
+  up to the float32 rounding of the monotone start.** Its largest codebook
+  difference is 1.9e-6. Its fingerprint differs (`1fbf143a…`), but its correct
+  counts are identical on every split.
+
+Paired evaluation in one run. The clean and both clustered models were
+re-evaluated and match their saved Step 10b/10c counts exactly. Selection
+accuracy is shown for reference only.
+
+| Model | Selection | `sst2-validation-872` | Gap to clean | Cross-entropy | `sst2-original-test-1820` | Gap to clean | Cross-entropy |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Clean (Step 10a) | 95.58% | 88.76% (774) | — | 0.5172 | 88.35% (1,608) | — | 0.5032 |
+| Condition B clustered (Step 10c) | 94.14% | 86.24% (752) | 2.52 pp | 0.5557 | 87.97% (1,601) | 0.38 pp | 0.4997 |
+| **Retrained, `linemb-codebook`** | 94.56% | **87.61% (764)** | **1.15 pp** | 0.3617 | **88.46% (1,610)** | **−0.11 pp** | 0.3246 |
+| Retrained, `linemb-codebook-lnbias` | 94.98% | 88.07% (768) | 0.69 pp | 0.3524 | 88.79% (1,616) | −0.44 pp | 0.3160 |
+| Linear-only clustered (Step 10b) | 95.26% | 88.30% (770) | 0.46 pp | 0.5123 | 88.79% (1,616) | −0.44 pp | 0.4961 |
+| `lin-codebook` (epoch 0) | 95.26% | 88.30% (770) | 0.46 pp | 0.5123 | 88.79% (1,616) | −0.44 pp | 0.4961 |
+
+- **Clustering loss:** the main variant recovered 1.38 of the 2.52 pp lost on
+  `sst2-validation-872`. On `sst2-original-test-1820` it ends 0.11 pp above
+  clean, which is 2 sentences.
+- **Cross-entropy:** both Condition B variants end far below clean's
+  cross-entropy on both test sets (0.36 vs 0.52 and 0.32 vs 0.50), although
+  their accuracy is not higher. This was not investigated further.
+- **The 12b baseline:** the main variant, as declared. The `lnbias` ablation
+  was not swept.
+- **Ordering:** all 29 codebooks of both Condition B variants stayed strictly
+  increasing at every evaluation. The smallest adjacent gap over all tensors
+  fell from 0.001586 to 0.001546 (main) and 0.001563 (ablation). No gap came
+  near the 1e-4 report threshold.
+
+### Size of the change
+
+Relative weight change per tensor, ‖W_new − W_old‖ / ‖W_old‖:
+
+| Variant | 27 other tensors | Pooler | Classifier | Largest single codebook change |
+| --- | ---: | ---: | ---: | ---: |
+| `linemb-codebook` | 1.3–79% | 469% | 708% | 0.163 |
+| `linemb-codebook-lnbias` | 0.4–81% | 160% | 601% | 0.138 |
+
+**Almost all of each change is a common shift.** In the monotone form, `c0`
+moves all 16 values of a codebook together. Remove each tensor's mean per-cell
+change, and what is left is only 0.2–4.2% of ‖W_old‖ (main) and 0.1–2.3%
+(ablation). The relative numbers are large where the shift is large compared
+with the tensor's typical weight:
+
+- **Classifier: the shift cancels in the softmax.** In the main variant, all 16
+  classifier codebook values rose by between +0.1602 and +0.1626 (mean
+  +0.1614), about 9 times the mean |weight| of 0.0185.
+  - Every codebook value is used in both class rows. The mean part therefore
+    adds the same vector, 0.1614 · **1**, to w₀ and to w₁.
+  - For a pooled input h, both logits rise by the same amount, 0.1614 · Σⱼ hⱼ.
+    Because softmax(z + c·**1**) = softmax(z), probabilities, loss, and
+    predictions are unchanged by this part.
+  - The output depends on the classifier only through w₁ − w₀ and b₁ − b₀. The
+    main variant does not train the bias. w₁ − w₀ changed by **2.05%** of its
+    norm (0.98% in the ablation), and its direction kept a cosine of 1.000000
+    with the old one.
+  - Along a shift common to both rows, the cross-entropy gradient is exactly
+    zero, so the loss did not drive this shift. Over the selected 1.5 epochs,
+    AdamW's roughly learning-rate-sized steps allow `c0` to move at most about
+    0.19 (Σ learning rates ≈ 0.4875 × 1e-4 × 3,898 steps). The 0.161 shift is
+    about 85% of that bound. This fits AdamW's per-parameter normalization
+    amplifying a rounding-level gradient of consistent sign, but that
+    explanation was not tested.
+- **Pooler: a real functional change.** All 16 pooler values rose by +0.0299 to
+  +0.0306 (mean +0.0303), 5.7 times the mean |weight| of 0.0053. The ablation's
+  shift was +0.0103.
+  - The pooler computes tanh(W h_CLS + b). A common shift δ adds δ · Σⱼ h_CLS,j
+    to all 312 pre-activations.
+  - Nothing downstream removes this offset. It depends on the input through
+    Σⱼ h_CLS,j, and tanh is nonlinear.
+  - It therefore changes the model's function, and the accuracies above include
+    its effect. Its separate contribution was not measured.
+- **The next-largest changes are also mostly common shifts:** layer 2's FFN
+  output weight (79%, mean shift −0.051), position embeddings (66%, −0.018),
+  and layer 3's value weight (59%, −0.052).
+  - A shift cancels exactly for tensors whose output goes straight into a
+    LayerNorm: the three embedding tables (summed, then normalized) and every
+    attention-output and FFN-output weight. There it adds the same value to all
+    312 components of each token's vector, which LayerNorm's mean subtraction
+    removes.
+  - It does not cancel for query, key, value, intermediate, or pooler weights.
+
+Per-tensor before/after codebooks are in `codebook_changes_<variant>.json`, and
+per-tensor gaps in `codebook_gaps.json`.
+
+### Saved encodings
+
+Each selected model is saved in the Step 10b/10c encoding format. `indices`,
+`index_to_level`, and `level_to_index` are identical for all tensors and
+verified bit for bit. `decode_state` of each encoding equals the selected
+model's effective weights exactly. Untouched state is unchanged except for the
+ablation's 44 LayerNorm and bias tensors.
+
+| Variant | Encoding fingerprint | `encoding.pt` SHA-256 |
+| --- | --- | --- |
+| `linemb-codebook` | `c80d058d984ee407f81985f5b6e7774058ea97fb520aed9db800c33c8148a07d` | `48f0dd9f…` |
+| `linemb-codebook-lnbias` | `9bf3f6b907fe72788c1f219c6a7f73f050d81191d1ed9d26e5b1e383197600d3` | `5895d132…` |
+| `lin-codebook` | `1fbf143a2b44e11fe8a8493e4eda24e46f645d12470043fb7b29f6e1b30abea8` | `cb90aa00…` |
+
+### Commands and files
+
+```zsh
+.venv/bin/python scripts/run_tinybert_codebook_finetune.py --config configs/tinybert_sst2_codebook_finetune_monotone.json
+```
+
+The run took 505 s on MPS, including all three trainings (33–45 s per half
+epoch) and the paired evaluation. Verification passed: selection reproduced from
+the selection split only, saved reference counts matched, and 100 source
+artifacts were verified.
+
+- `src/fault_lora/training/tinybert_codebook_finetune.py`: shared-weight
+  Linear and Embedding layers, `MonotoneCodebook`, the trainable-set control,
+  frozen-state checks, the ordering check, the gap report, encoding
+  construction, paired evaluation, and verification.
+- `tests/test_tinybert_codebook.py`: two new Step 12a checks:
+  - the monotone form starts at the sorted codebook, stays strictly increasing,
+    and trains only `c0` and `g`;
+  - on the same toy problem, monotone retraining keeps the order that direct
+    retraining breaks.
+
+| Artifact | Purpose |
+| --- | --- |
+| `results/tinybert-sst2-codebook-finetune-monotone-k16-seed42/` | Configuration, sources, environment, histories, trainable counts, ordering and gap reports, codebook changes, encodings record, paired evaluation (JSON/CSV), manifest, verification. |
+| `checkpoints/…/<variant>/encoding.pt`, `dense.pt` | New encodings and their dense reconstructions. |
+| `checkpoints/…/<variant>/best.pt`, `last.pt` | Selected and final codebooks plus untouched state. |
+| `results/tinybert-sst2-codebook-finetune-k16-seed42/` | The stopped direct run, kept as a record. |
+
+### Limitations
+
+- **One run:** one seed and one recipe; no learning-rate or epoch study.
+- **Lower selection accuracy than the direct run:** the stopped direct run
+  reached higher selection counts: 4,761, 4,764, and 4,767 vs 4,728, 4,749,
+  and 4,762 here, in table order. Those models broke codebook order and cannot
+  be saved as encodings, and the comparison is selection-only.
+- **Linear-only not retrained in effect:** `lin-codebook` kept epoch 0, so it
+  is a control for the pipeline, not a retraining result.
+- **Common shifts in unconstrained directions:** the optimizer moved `c0` where
+  the loss gradient is zero (the classifier and LayerNorm-fed tensors). This is
+  harmless to the function there. Adjacent gaps, which set a fault's size, do
+  not change with a common shift.
+- **Reliable memory assumed:** codebooks, LayerNorm, and biases are assumed
+  reliable. The ablation enlarges that reliable trained state to 17,434 values.
+- **Nondeterminism:** codebook gradients are scatter-add sums whose
+  floating-point order is not guaranteed on MPS.
+
+## Step 12b: fault sweep on the retrained TinyBERT baseline
+
+**Purpose:** as in Step 11b, find out how much of the Condition B fault damage
+came from the stale clustered baseline. The Step 12a `linemb-codebook` encoding
+(fingerprint `c80d058d…`) is the new baseline. `lin-codebook` is a Linear-only
+ablation. **No LoRA was trained.**
+
+![Accuracy versus requested fault probability, 0 to 50 percent, for the clustered and codebook-retrained TinyBERT encodings under identical faults: Linear-only (top) and Linear plus embeddings (bottom), one column per test set, with clean reference lines.](docs/figures/tinybert-sst2-step12b-retrained-fault-sweep.png)
+
+[Download the PDF figure](docs/figures/tinybert-sst2-step12b-retrained-fault-sweep.pdf).
+Points and bars are mean ± 1 sample SD over 5 patterns per nonzero rate. In the
+top row the two curves coincide, because the Linear-only encodings are the same
+model (Step 12a).
+
+### Method
+
+1. **Regenerated patterns (52).** Every pattern was regenerated against the
+   retrained encoding with its original seed and probability. Positions,
+   before-levels, and after-levels were compared tensor by tensor with the
+   saved pattern. **All 52 were identical**, as expected, since Step 12a left
+   every index unchanged. All identity checks finished before any evaluation; a
+   difference would have stopped the run.
+   - **Condition B (26):** Step 10c's patterns at 0, 1, 5, 10, 20, and 50%:
+     `rate00-zero`, `rate03-seed1010`–`1014`, `rate05-seed1020`–`1024`,
+     `rate06-seed1025`–`1029`, `rate07-seed1030`–`1034`, and
+     `rate08-seed1035`–`1039`.
+   - **Linear only (26):** Step 10b's `rate00-zero`, `rate03` (seeds 52–56),
+     `rate05` (62–66), and `rate06` (67–71), plus Step 10c Condition A's
+     `rate07` (72–76) and `rate09` (82–86).
+2. **Audit.** The eight Step 6 checks were run on the retrained Condition B
+   encoding, and **all passed**:
+   - source integrity: fingerprint, all 29 tensors' cells identical to the old
+     encoding, strictly increasing codebooks, exact dense reconstruction;
+   - zero-fault identity: 0 cells corrupted and logits exactly equal;
+   - the saved p=0.01, seed-42 pattern: 143,677 corrupted cells, each changing
+     a weight, the same cells as on the old encoding and Step 10c's count;
+   - replay without accumulation;
+   - same-seed reproduction;
+   - a different seed (43): 143,544 cells;
+   - all-cell selection: all 14,333,904 cells, with 30,140 lower-boundary and
+     38,815 upper-boundary transitions, matching Step 10c;
+   - source preservation.
+3. **Evaluation.** Each pattern was applied to the old encoding (its saved
+   pattern) and to the retrained one (its saved retrained-bound pattern). Both
+   were evaluated on selection and on both test sets.
+   - The old re-evaluation had to match every saved Step 10b/10c count exactly,
+     and it did.
+   - The retrained zero-fault counts had to match Step 12a's, and they did.
+
+**Fault damage** = that encoding's own zero-fault accuracy minus its accuracy
+under the pattern, in pp. It is reported as mean ± sample SD across the 5
+patterns. The selection split is measured but is not a result. Requested and
+realized rates agreed within 0.02 pp of the cells (mean of 5 patterns).
+Retrained-bound patterns are saved under the run's `checkpoints/…/patterns/`
+(780 MB).
+
+### Measured results: Condition B (Linear + embeddings)
+
+**Paired** = retrained − old accuracy on the same pattern, mean ± SD over the 5
+patterns. Positive means the retrained baseline is more accurate.
+
+**`sst2-validation-872`:**
+
+| Rate | Old accuracy | Retrained accuracy | Old damage (pp) | Retrained damage (pp) | Paired (pp) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0% | 86.24% | 87.61% | 0 | 0 | +1.38 |
+| 1% | 86.10 ± 0.70 | 86.26 ± 0.77 | 0.14 ± 0.70 | 1.35 ± 0.77 | +0.16 ± 0.70 |
+| 5% | 84.01 ± 0.81 | 85.28 ± 0.86 | 2.22 ± 0.81 | 2.34 ± 0.86 | +1.26 ± 0.35 |
+| 10% | 84.17 ± 1.22 | 85.23 ± 1.64 | 2.06 ± 1.22 | 2.39 ± 1.64 | +1.06 ± 0.96 |
+| 20% | 80.23 ± 1.65 | 81.33 ± 1.90 | 6.01 ± 1.65 | 6.28 ± 1.90 | +1.10 ± 0.74 |
+| 50% | 67.89 ± 7.60 | 67.64 ± 7.52 | 18.35 ± 7.60 | 19.98 ± 7.52 | −0.25 ± 2.61 |
+
+**`sst2-original-test-1820`:**
+
+| Rate | Old accuracy | Retrained accuracy | Old damage (pp) | Retrained damage (pp) | Paired (pp) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0% | 87.97% | 88.46% | 0 | 0 | +0.49 |
+| 1% | 87.88 ± 0.72 | 88.27 ± 0.51 | 0.09 ± 0.72 | 0.19 ± 0.51 | +0.40 ± 0.28 |
+| 5% | 85.45 ± 1.46 | 87.25 ± 0.92 | 2.52 ± 1.46 | 1.21 ± 0.92 | +1.80 ± 0.88 |
+| 10% | 85.34 ± 0.71 | 86.29 ± 1.15 | 2.63 ± 0.71 | 2.18 ± 1.15 | +0.95 ± 0.75 |
+| 20% | 80.85 ± 1.84 | 82.35 ± 1.55 | 7.12 ± 1.84 | 6.11 ± 1.55 | +1.51 ± 1.35 |
+| 50% | 67.70 ± 8.36 | 67.33 ± 8.62 | 20.26 ± 8.36 | 21.13 ± 8.62 | −0.37 ± 3.24 |
+
+The old columns equal Step 10c's Condition B table.
+
+### Linear-only ablation
+
+The old and retrained encodings gave **identical correct counts for every
+pattern on every split**, as expected after Step 12a selected epoch 0 for
+`lin-codebook`.
+
+| Rate | `sst2-validation-872` | Damage (pp) | `sst2-original-test-1820` | Damage (pp) |
+| ---: | ---: | ---: | ---: | ---: |
+| 0% | 88.30% | 0 | 88.79% | 0 |
+| 1% | 88.37 ± 0.41 | −0.07 ± 0.41 | 88.42 ± 0.20 | 0.37 ± 0.20 |
+| 5% | 88.28 ± 0.25 | 0.02 ± 0.25 | 88.55 ± 0.23 | 0.24 ± 0.23 |
+| 10% | 87.75 ± 0.27 | 0.55 ± 0.27 | 88.27 ± 0.39 | 0.52 ± 0.39 |
+| 20% | 85.94 ± 1.40 | 2.36 ± 1.40 | 86.67 ± 1.32 | 2.12 ± 1.32 |
+| 50% | 82.68 ± 2.18 | 5.62 ± 2.18 | 83.58 ± 2.02 | 5.21 ± 2.02 |
+
+These equal the Step 10b and Step 10c Condition A values.
+
+**Interpretation, limited to these measurements:**
+
+- **The starting point improved; the fault damage did not consistently fall.**
+  Retraining raised zero-fault accuracy by 1.38 pp (`sst2-validation-872`) and
+  0.49 pp (`sst2-original-test-1820`).
+  - On `sst2-validation-872`, retrained damage was higher at every rate, by
+    0.11–1.63 pp.
+  - On `sst2-original-test-1820`, it was lower at 5, 10, and 20% (by 1.31,
+    0.45, and 1.01 pp) and higher at 1 and 50%.
+  - The two test sets disagree in sign at 5–20%, so neither direction holds on
+    both.
+- **From 1% to 20%, the retrained baseline stays ahead by roughly its starting
+  margin.** It was more accurate on 35 of the 40 paired pattern–test
+  comparisons, by +0.16 to +1.80 pp on average.
+- **At 50% it is not ahead.** The paired means are −0.25 and −0.37 pp, with
+  SDs of 2.6–3.2 pp. Pattern `rate08-seed1036` cost the retrained encoding
+  4.70 and 5.99 pp more than the old one.
+- **Condition B's damage was not caused by the stale baseline:** 1.2–2.6 pp at
+  5–10%, 6–7 pp at 20%, and 18–21 pp at 50% remain. This differs from
+  ResNet-18 (Step 11b), where retraining cut the damage at ≤2%. Here the damage
+  at 1% was already near zero (0.1 pp) before retraining.
+- **Linear-only ablation:** a pipeline control. Regenerated patterns and an
+  encoding with a different fingerprint, but the same values, reproduce every
+  count. It says nothing about retraining.
+
+### Commands and files
+
+```zsh
+.venv/bin/python scripts/run_tinybert_retrained_fault_sweep.py --config configs/tinybert_sst2_retrained_fault_sweep.json
+```
+
+- **Timing:** the run recorded 825.7 s of monotonic time on MPS for the audit,
+  52 identity checks, 104 paired model evaluations on three splits, and the
+  figure. Its files span 18:56 on 2026-10-28 to 06:46 on 2026-10-29, local
+  time. The macOS monotonic clock does not advance during sleep, so the machine
+  most likely slept during the run.
+- **Verification:** passed. It covers 52 patterns verified identical, the audit,
+  the aggregate recomputed, CSV equal to JSON, and 104 source artifacts. The
+  run accepted no source-hash change of its own. Its manifest lists the
+  inherited source-chain entries from the committed decision file.
+- `src/fault_lora/evaluation/tinybert_retrained_faults.py`: source loading, the
+  audit, pattern identity, both encodings' evaluation, aggregation, the figure,
+  and verification. It is a new file; no previously hash-recorded file changed.
+- `tests/test_tinybert_codebook.py`: one new offline end-to-end check of the
+  audit, identical cells, and the damage measurement.
+
+| Artifact | Purpose |
+| --- | --- |
+| `results/tinybert-sst2-retrained-fault-sweep-seed1000/audit.json` | Eight-check audit of the retrained Condition B encoding. |
+| `…/pattern_identity.json` | Per-pattern identity result and what each was compared with. |
+| `…/measurements.json`, `measurements.csv`, `patterns/*.json` | Every encoding × pattern × split measurement with its fault damage. |
+| `…/aggregate.json` | Per-group, per-encoding, per-rate statistics on all three splits. |
+| `…/retrained_fault_sweep.png` / `.pdf` | The figure above; byte-identical copies in `docs/figures/`. |
+| `…/verification.json`, `manifest.json` | Post-run checks, fingerprints, and input and plot hashes. |
+
+The full offline suite passes **132 tests**: 129 at `64a5a20`, plus the three
+new Step 12a/12b checks.
+
+### Limitations
+
+- **Patterns:** five per rate, and one Step 12a retraining seed. SDs describe
+  variation across patterns only.
+- **Small test sets:** one sentence is 0.11 pp of `sst2-validation-872` and
+  0.05 pp of `sst2-original-test-1820`. Differences of about 1 pp are 5–10
+  sentences.
+- **Ablations:** the `lnbias` ablation was not swept. The Linear-only ablation
+  tests the pipeline, not retraining.
+- **Explanation not tested:** why the retrained encoding loses more at 50% on
+  some patterns was not investigated.
+- **Fault model:** uniform adjacent-level simulator only; no hardware
+  calibration.
+- **Reliable memory:** codebooks, LayerNorm, and biases are treated as reliable.
+
 ## Next steps
 
 9. **Remaining ResNet-18 comparisons:** Step 9b covered matched clean and
@@ -2917,6 +3343,9 @@ The full offline suite passes **122 tests**.
     Step 10c added two harsher conditions. Step 10d added the recovery code,
     one pilot, and the [proposed Part 7 matrix](#proposed-part-7-matrix-not-run);
     Step 10e ran it with its transfer evaluations and the controls analysis.
+    Step 12a retrained the TinyBERT codebooks with indices fixed, and Step 12b
+    measured fault damage on the retrained Condition B baseline. LoRA on that
+    baseline (Step 12c) has not been run.
 
 Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,

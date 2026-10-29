@@ -28,6 +28,8 @@ from fault_lora.memory.selected_clustering import cluster_named_tensors
 from fault_lora.models.lora import adapter_state_dict, base_state_dict, load_adapter_state
 from fault_lora.models.tinybert_embedding_lora import EmbeddingLoRALayer, attach_linear_embedding_lora
 from fault_lora.models.tinybert_lora import attach_linear_lora
+from fault_lora.evaluation import tinybert_retrained_faults as retrained_faults
+from fault_lora.evaluation.tinybert_retrained_faults import TinyBertRetrainedSweepConfig, run_tinybert_retrained_sweep
 from fault_lora.training import tinybert_codebook_finetune as finetune
 from fault_lora.training.codebook_finetune import build_encoding, codebook_order, effective_state, verify_same_cells
 from fault_lora.training.tinybert_codebook_finetune import (CodebookEmbedding, TinyBertCodebookConfig, attach_tinybert_codebooks, run_tinybert_codebook_finetune,
@@ -160,6 +162,36 @@ class CodebookEmbeddingTests(unittest.TestCase):
             build_encoding(self.encoding, broken, untouched, {})
 
 
+class MonotoneCodebookTests(unittest.TestCase):
+    def test_starts_at_the_sorted_codebook_stays_strictly_increasing_and_trains_only_c0_and_g(self):
+        model = fixture.tiny_model()
+        encoding = linear_and_embedding_encoding(model)
+        wrapped = fixture.tiny_model()
+        wrapped.load_state_dict(decode_state(encoding))
+        layers = attach_tinybert_codebooks(wrapped, encoding, parameterization="monotone")
+        for name, layer in layers.items():
+            original = encoding["clustered_tensors"][f"{name}.weight"]["codebook"]
+            self.assertLess((layer.codebook_values - original).abs().max().item(), 1e-6)
+            self.assertEqual(layer.init_error, (layer.codebook_values - original).abs().max().item())
+        trainable = set_tinybert_trainable(wrapped, layers, {**CODEBOOK_ONLY, "condition": "linear-and-embeddings"})
+        self.assertEqual(set(trainable), {f"{name}.monotone.{part}" for name in layers for part in ("c0", "g")})
+        optimizer = torch.optim.SGD([p for p in wrapped.parameters() if p.requires_grad], lr=50.0)
+        probe = synthetic_token_batch(model.config.to_dict(), length=8)
+        for _ in range(5):
+            optimizer.zero_grad()
+            F.cross_entropy(wrapped.eval()(**probe).logits, torch.tensor([0, 1])).backward()
+            optimizer.step()
+        for name, layer in layers.items():
+            values = layer.codebook_values.detach()
+            self.assertTrue(bool((values[1:] > values[:-1]).all()), name)
+            self.assertTrue(torch.equal(layer.indices, encoding["clustered_tensors"][f"{name}.weight"]["indices"]))
+        self.assertFalse(any(".monotone." in name for name in finetune.tinybert_effective_state(wrapped, layers)))
+        with self.assertRaises(AssertionError):
+            finetune.MonotoneCodebook(torch.tensor([0.0, 0.0, 1.0]))
+        with self.assertRaises(ValueError):
+            TinyBertCodebookConfig(parameterization="sorted").validate()
+
+
 class CodebookPipelineTests(unittest.TestCase):
     def build_chain(self, root):
         step10a = fixture.TinyBertBaselineRunTests.build(None, root)
@@ -209,6 +241,70 @@ class CodebookPipelineTests(unittest.TestCase):
             self.assertEqual(stopped["status"], "stopped_codebook_order_violation")
             self.assertFalse(list((root / "checkpoints/tiny-unsorted").rglob("encoding.pt")))
             self.assertFalse((root / "results/tiny-unsorted/paired_evaluation.json").exists())
+
+    def test_monotone_retraining_keeps_order_where_direct_retraining_broke_it(self):
+        # Same chain and recipe as above, but a learning rate that breaks order under direct codebooks.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.build_chain(root)
+            options = dict(source_sweeps={"linear-only": "results/tiny-sweep"}, epochs=1, evaluations_per_epoch=2, batch_size=16, learning_rate=1e-3, expected_training_examples=80,
+                           device="cpu", cpu_threads=1)
+            direct = run_tinybert_codebook_finetune(TinyBertCodebookConfig(run_id="tiny-direct", variants=[CODEBOOK_ONLY], **options), root)
+            self.assertEqual(direct["status"], "stopped_codebook_order_violation")
+            result = run_tinybert_codebook_finetune(TinyBertCodebookConfig(run_id="tiny-monotone", variants=[CODEBOOK_ONLY, WITH_LN], parameterization="monotone", **options), root)
+            results = root / "results/tiny-monotone"
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual(json.loads((results / "verification.json").read_text())["status"], "passed")
+            gaps = json.loads((results / "codebook_gaps.json").read_text())
+            for report in gaps["variants"]["codebook"].values():
+                self.assertGreater(report["after"], 0)
+                self.assertLess(report["initialization_error"], 1e-5)
+            self.assertIn("collapsed", gaps)
+            trainable = json.loads((results / "trainable.json").read_text())
+            self.assertEqual(trainable["codebook"]["parameterization"], "monotone")
+            self.assertTrue(all(name.endswith((".monotone.c0", ".monotone.g")) for name in trainable["codebook"]["trainable_names"]))
+            source = torch.load(root / "checkpoints/tiny-clustered/encoding.pt", weights_only=True)
+            for key in ("codebook", "codebook-lnbias"):
+                saved = torch.load(root / result["encodings"][key]["encoding"], weights_only=True)
+                verify_same_cells(saved, source)
+                self.assertTrue(all(bool((record["codebook"][1:] > record["codebook"][:-1]).all()) for record in saved["clustered_tensors"].values()))
+
+    def test_retrained_sweep_audits_checks_identical_cells_and_measures_damage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.build_chain(root)
+            (root / "scripts/run_tinybert_retrained_fault_sweep.py").write_text("placeholder\n")
+            run_tinybert_codebook_finetune(TinyBertCodebookConfig(run_id="tiny-monotone", variants=[{**CODEBOOK_ONLY, "variant_id": "lin-codebook"}], parameterization="monotone",
+                                                                  source_sweeps={"linear-only": "results/tiny-sweep"}, epochs=1, evaluations_per_epoch=1, batch_size=16,
+                                                                  expected_training_examples=80, device="cpu", cpu_threads=1), root)
+            group = {"group_id": "lin", "variant_id": "lin-codebook", "condition": "linear-only", "sweeps": ["results/tiny-sweep"], "audit": True}
+            options = dict(finetune_results="results/tiny-monotone", groups=[group], probabilities=[0, .3], patterns_per_rate=2, audit_probability=.05, device="cpu")
+            result = run_tinybert_retrained_sweep(TinyBertRetrainedSweepConfig(run_id="tiny-retrained-sweep", **options), root)
+            results = root / "results/tiny-retrained-sweep"
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual(json.loads((results / "verification.json").read_text())["status"], "passed")
+            self.assertEqual(len(json.loads((results / "audit.json").read_text())["checks"]["lin"]), 8)
+            identity = json.loads((results / "pattern_identity.json").read_text())
+            self.assertEqual((len(identity), all(item["identical"] for item in identity)), (3, True))
+            records = json.loads((results / "measurements.json").read_text())
+            for record in records:
+                saved = json.loads((root / "results/tiny-sweep/patterns" / f"{record['pattern_id']}.json").read_text())
+                self.assertEqual(record["models"]["old"], saved["measurements"])
+            entry = result["aggregate"]["lin"]["retrained"][1]
+            zero = result["aggregate"]["lin"]["retrained"][0]
+            for split, values in entry["splits"].items():
+                self.assertAlmostEqual(values["fault_damage_percentage_points"]["mean"], 100 * (zero["splits"][split]["accuracy"]["mean"] - values["accuracy"]["mean"]))
+            for extension in ("png", "pdf"):
+                self.assertGreater((results / f"retrained_fault_sweep.{extension}").stat().st_size, 1000)
+            with self.assertRaises(FileExistsError):
+                run_tinybert_retrained_sweep(TinyBertRetrainedSweepConfig(run_id="tiny-retrained-sweep", **options), root)
+            with mock.patch.object(retrained_faults, "transition_differences", return_value=[{"tensor": "x", "field": "positions"}]):
+                stopped = run_tinybert_retrained_sweep(TinyBertRetrainedSweepConfig(run_id="tiny-mismatch", **{**options, "groups": [{**group, "audit": False}]}), root)
+            self.assertEqual(stopped["status"], "stopped_pattern_mismatch")
+            self.assertFalse((root / "results/tiny-mismatch/measurements.json").exists())
+            for bad in ({"probabilities": [.1, 0]}, {"groups": []}, {"patterns_per_rate": 1}):
+                with self.assertRaises(ValueError):
+                    TinyBertRetrainedSweepConfig(**{**options, **bad}).validate()
 
     def test_invalid_configuration_rejected(self):
         TinyBertCodebookConfig().validate()

@@ -1,0 +1,39 @@
+{
+  "run_id": "tinybert-sst2-retrained-fault-sweep-seed1000",
+  "finetune_results": "results/tinybert-sst2-codebook-finetune-monotone-k16-seed42",
+  "groups": [
+    {
+      "group_id": "linemb",
+      "variant_id": "linemb-codebook",
+      "condition": "linear-and-embeddings",
+      "sweeps": [
+        "results/tinybert-sst2-fault-sweep-linear-emb-seed1000"
+      ],
+      "audit": true
+    },
+    {
+      "group_id": "lin",
+      "variant_id": "lin-codebook",
+      "condition": "linear-only",
+      "sweeps": [
+        "results/tinybert-sst2-fault-sweep-seed42",
+        "results/tinybert-sst2-fault-sweep-linear-high-seed72"
+      ],
+      "audit": false
+    }
+  ],
+  "probabilities": [
+    0,
+    0.01,
+    0.05,
+    0.1,
+    0.2,
+    0.5
+  ],
+  "patterns_per_rate": 5,
+  "audit_probability": 0.01,
+  "audit_seed": 42,
+  "device": "mps",
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}
