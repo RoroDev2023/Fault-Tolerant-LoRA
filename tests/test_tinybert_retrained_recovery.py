@@ -112,5 +112,71 @@ class RetrainedRecoveryPipelineTests(unittest.TestCase):
                     TinyBertRetrainedMatrixConfig(**{**dataclasses.asdict(matrix), **bad}).validate()
 
 
+class RetrainedControlsAnalysisTests(unittest.TestCase):
+    def test_analysis_reproduces_definitions_placement_pairs_and_design_checks(self):
+        from fault_lora.evaluation.tinybert_retrained_lora_controls import TinyBertRetrainedControlsConfig, run_retrained_controls, table_rows, validate_design
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            records = build_retrained_chain(root)
+            (root / "scripts/analyze_tinybert_retrained_lora_controls.py").write_text("placeholder\n")
+            faulty = [record["pattern_id"] for record in records if record["probability"] > 0]
+            sweep = "results/tiny-retrained-sweep"
+            runs = [{"adapter_placement": placement, "base_kind": kind, "condition": None if kind == "clean" else "linear-only", "pattern_id": pattern,
+                     "source_sweep_results": "results/tiny-sweep" if kind == "clean" else sweep, "seed": seed}
+                    for placement in ("linear", "linear+emb") for kind, pattern, seeds in (("clean", None, (42, 43)), ("retrained-clustered", None, (42, 43)),
+                                                                                         ("retrained-faulty", faulty[0], (42,)), ("retrained-faulty", faulty[1], (42,)))
+                    for seed in seeds]
+            controls = [index for index, run in enumerate(runs) if run["base_kind"] == "retrained-clustered"]
+            matrix = {"matrix_id": "tiny-12c", "recipe": dict(epochs=1, evaluations_per_epoch=1, batch_size=16, expected_training_examples=80, loss_window_steps=2, cpu_threads=1, device="cpu"),
+                      "runs": runs, "transfers": [{"adapter_run": index, "pattern_id": name} for index in controls for name in faulty]}
+            (root / "configs").mkdir(exist_ok=True)
+            (root / "configs/tiny-12c.json").write_text(json.dumps(matrix))
+            run_retrained_matrix(TinyBertRetrainedMatrixConfig(**matrix), root)
+            config = TinyBertRetrainedControlsConfig(run_id="tiny-12c-controls", source_matrix_config="configs/tiny-12c.json", step10e_analysis=None, rates=[.3], control_seeds=[42, 43],
+                                                     faulty_seeds=[42], patterns_per_rate=2, device="cpu")
+            analysis = run_retrained_controls(config, root)
+            results = root / "results/tiny-12c-controls"
+            self.assertEqual(json.loads((results / "verification.json").read_text())["status"], "passed")
+            metrics = {(run["adapter_placement"], run["base_kind"], run["pattern_id"], run["seed"]):
+                       json.loads((root / "results" / retrained_recovery_run_id(run["adapter_placement"], run["base_kind"], run["pattern_id"], 4, run["seed"]) / "metrics.json").read_text())
+                       for run in runs}
+            for split, result in analysis["test_sets"].items():
+                after = lambda *key: metrics[key]["after"][split]["accuracy"]
+                for placement in ("linear", "linear+emb"):
+                    item = result["placements"][placement]
+                    clean = metrics[(placement, "clean", None, 42)]["before"][split]["accuracy"]
+                    self.assertAlmostEqual(item["extra_training_effect_percentage_points"]["per_seed"]["43"], 100 * (after(placement, "clean", None, 43) - clean))
+                    clustered_mean = (after(placement, "retrained-clustered", None, 42) + after(placement, "retrained-clustered", None, 43)) / 2
+                    damage = [100 * (after(placement, "retrained-faulty", name, 42) - clustered_mean) for name in faulty]
+                    self.assertAlmostEqual(item["rates"][0]["fault_damage_left_percentage_points"]["mean"], sum(damage) / 2)
+                    before = metrics[(placement, "retrained-faulty", faulty[0], 42)]["before"][split]["accuracy"]
+                    run = next(run for run in item["rates"][0]["runs"] if run["pattern_id"] == faulty[0])
+                    if clean > before:
+                        self.assertAlmostEqual(run["normalized_recovery"], (after(placement, "retrained-faulty", faulty[0], 42) - before) / (clean - before))
+                    self.assertEqual(item["rates"][0]["transfer"]["num_evaluations"], 4)
+                    self.assertEqual(item["adapter"]["layers"]["Embedding"], 3 if placement == "linear+emb" else 0)
+                pairs = result["placement_difference"]["rates"][0]["lora_after"]
+                expected = [100 * (after("linear+emb", "retrained-faulty", name, 42) - after("linear", "retrained-faulty", name, 42)) for name in faulty]
+                self.assertEqual([pair["difference"] for pair in pairs["pairs"]], expected)
+                self.assertIsNone(result["step10e_comparison"])
+                self.assertGreater(result["binomial_sd_percentage_points"], 0)
+            self.assertEqual(len(table_rows(analysis)), 2 * 2 * 3)
+            for extension in ("png", "pdf"):
+                self.assertGreater((results / f"retrained_lora_controls.{extension}").stat().st_size, 1000)
+            with self.assertRaises(FileExistsError):
+                run_retrained_controls(config, root)
+            from fault_lora.evaluation.tinybert_retrained_lora_controls import load_inputs
+            data = load_inputs(root, config)
+            missing = {key: value for key, value in data["runs"].items() if key != ("linear+emb", "clean", None, 43)}
+            with self.assertRaises(AssertionError):
+                validate_design(missing, data["transfers"], config)
+            with self.assertRaises(AssertionError):
+                validate_design(data["runs"], data["transfers"][:-1], config)
+            for bad in ({"placements": ["linear+emb", "linear"]}, {"rates": [.5, .3]}, {"faulty_seeds": [44]}):
+                with self.assertRaises(ValueError):
+                    TinyBertRetrainedControlsConfig(**{**dataclasses.asdict(config), **bad}).validate()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,26 @@
+{
+  "run_id": "tinybert-sst2-lora12c-controls",
+  "source_matrix_config": "configs/tinybert_sst2_lora12c_matrix.json",
+  "step10e_analysis": "results/tinybert-sst2-lora-controls",
+  "placements": [
+    "linear",
+    "linear+emb"
+  ],
+  "rates": [
+    0.1,
+    0.2,
+    0.5
+  ],
+  "control_seeds": [
+    42,
+    43,
+    44
+  ],
+  "faulty_seeds": [
+    42,
+    43
+  ],
+  "patterns_per_rate": 3,
+  "device": "mps",
+  "results_root": "results"
+}

@@ -3329,6 +3329,381 @@ new Step 12a/12b checks.
   calibration.
 - **Reliable memory:** codebooks, LayerNorm, and biases are treated as reliable.
 
+## Step 12c: LoRA recovery on the retrained TinyBERT baseline, two adapter placements
+
+**Purpose:** repeat Step 10e's Condition B controls on the codebook-retrained
+baseline (Step 12a `linemb-codebook`, Step 12b patterns), and compare two
+adapter placements:
+
+- How much fault damage does LoRA leave once most of the clustering loss is
+  removed before any fault?
+- Does adapting the embedding tables help? They hold 9,683,232 of the
+  14,333,904 faulted cells (67.6%).
+
+### Method
+
+- **Adapter placements.** Both use the Step 10d/10e recipe unchanged. Sizes are
+  measured from the runs. The percentage is relative to the bit-packed
+  Condition B model, 7,244,112 bytes: 4-bit indices 7,166,952, codebooks 1,856,
+  mappings 7,424, and reliable LayerNorm and biases 67,880 (Step 10c
+  `storage.json`).
+
+  | Placement | Adapted layers | Trainable parameters | float32 bytes | % of bit-packed Condition B |
+  | --- | --- | ---: | ---: | ---: |
+  | `linear` | the 26 `nn.Linear` layers, exactly as in Step 10e | 92,072 | 368,288 | **5.08%** |
+  | `linear+emb` | the same, plus the word, position, and token-type embeddings | 219,960 | 879,840 | **12.15%** |
+
+  The embedding adapters add 127,888 parameters. 122,088 of them (95.5%) are
+  the word-embedding A table (30,522 × 4).
+- **Embedding adapters.** These use `EmbeddingLoRALayer` from `64a5a20`. For
+  token ids, the output is `base(ids) + scale · B(A[ids])`. A is a trainable
+  num × 4 lookup table initialized N(0, 1); B is 4 → 312 and starts at zero.
+  The correction to the table, A Bᵀ, has rank at most 4 (2 for the 2-row
+  token-type table).
+  - **This is the initialization for embedding adapters in this step.**
+    Implementations differ for embeddings. Some initialize A at zero and B
+    randomly, and a Kaiming bound has no single meaning for a lookup table.
+  - **The property that matters is the exact zero-output start.** It holds:
+    every run checked that attaching the adapters left the logits bit-identical.
+  - Linear adapters keep Kaiming-uniform A and zero B, with the same seeded
+    draws as Step 10e.
+- **Recipe (unchanged):** rank 4, alpha 4, base fully frozen in `eval()` mode,
+  AdamW 1e-3 with weight decay 1e-4, cosine schedule per batch, gradient
+  clipping 1.0, batch 32, 2 epochs over the 62,349-sentence LoRA split, and
+  half-epoch selection on the selection split with epoch 0 competing. Device:
+  MPS.
+- **Bases:**
+  - **clean:** the Step 10a checkpoint, through the Condition B sweep's
+    verified chain;
+  - **retrained clustered:** the Step 12a encoding with zero faults (87.61% /
+    88.46%);
+  - **retrained faulty:** the first three Step 12b retrained-bound patterns at
+    10% (`rate06-seed1025`–`1027`), 20% (`rate07-seed1030`–`1032`), and 50%
+    (`rate08-seed1035`–`1037`). These are the same cells as Step 10e's
+    Condition B patterns, so each Linear run here pairs with a Step 10e run on
+    the same pattern and seed.
+- **Checks in every run**, beyond Step 10d's: the Step 12b sweep, its audit,
+  pattern identity, and source-code record; the pinned Step 12a encoding (hash,
+  fingerprint, identical cells, strict order, dense reconstruction); and the
+  selected pattern (hash, bound fingerprint, seed, rate, counts). The base with
+  zero adapters had to reproduce the Step 12b record exactly on all three
+  splits.
+- **Matrix, declared before running (48 runs):** each placement × (clean × seeds
+  42–44, retrained clustered × seeds 42–44, 3 rates × 3 patterns × seeds 42–43).
+  Runs were ordered so every new code path ran within the first 14 runs.
+- **Transfer (evaluation only, 54):** for each placement, the 3
+  retrained-clustered adapters on all 9 faulty patterns. Each was also measured
+  with the adapter output zeroed, which had to reproduce the Step 12b record.
+- **Time estimate before launch:** Step 10e took 140 s per run on MPS (137–149
+  s) and about 11 s per transfer. That gives 48 × ~145 s + 54 × ~11 s ≈ 2.1 h.
+
+![Accuracy versus requested fault probability on the codebook-retrained TinyBERT Condition B base, one panel per test set: no repair, LoRA with Linear adapters, LoRA with Linear plus embedding adapters, both placements' transferred retrained-clustered adapters, and the Step 10e Linear LoRA reference.](docs/figures/tinybert-sst2-step12c-retrained-lora-controls.png)
+
+[Download the PDF figure](docs/figures/tinybert-sst2-step12c-retrained-lora-controls.pdf).
+
+### Measured results
+
+All runs finished and verified: 48 of 48 trainings and 54 of 54 transfer
+evaluations. Values are mean ± sample SD.
+
+- Faulty rates pool 3 patterns × 2 training seeds (6 runs). Each pattern
+  appears twice in the "Before" SD.
+- The clean and retrained-clustered controls pool 3 training seeds.
+- Test sets are never pooled.
+
+**Noise scale.** One run's accuracy has a binomial sampling SD of **1.07 pp**
+on `sst2-validation-872` and **0.75 pp** on `sst2-original-test-1820`, at the
+clean accuracy. No difference below the observed spread is claimed as an
+effect.
+
+#### Accuracy before and after LoRA
+
+"Before" is the base with no adapter. It is the same for both placements and
+equals the Step 12b record of that base.
+
+**`sst2-validation-872`:**
+
+| Base | Before | Linear after | Linear + emb after |
+| --- | ---: | ---: | ---: |
+| clean | 88.76% | 88.34 ± 0.35 | 88.76 ± 0.00 |
+| retrained clustered (0%) | 87.61% | 88.23 ± 0.93 | 87.46 ± 0.43 |
+| retrained faulty 10% | 85.78 ± 1.59 | 86.98 ± 0.64 | 87.02 ± 0.81 |
+| retrained faulty 20% | 82.61 ± 0.65 | 87.18 ± 0.58 | 86.95 ± 0.68 |
+| retrained faulty 50% | 68.12 ± 4.83 | 84.65 ± 0.63 | 84.79 ± 0.78 |
+
+**`sst2-original-test-1820`:**
+
+| Base | Before | Linear after | Linear + emb after |
+| --- | ---: | ---: | ---: |
+| clean | 88.35% | 88.97 ± 0.18 | 88.35 ± 0.00 |
+| retrained clustered (0%) | 88.46% | 89.25 ± 0.06 | 89.12 ± 0.11 |
+| retrained faulty 10% | 86.98 ± 0.30 | 88.62 ± 0.29 | 88.63 ± 0.26 |
+| retrained faulty 20% | 83.32 ± 0.47 | 88.22 ± 0.20 | 88.05 ± 0.45 |
+| retrained faulty 50% | 68.41 ± 6.23 | 86.89 ± 0.40 | 86.56 ± 0.53 |
+
+#### Derived quantities
+
+All values are in pp, except R.
+
+- **Extra-training effect** = LoRA(clean) − clean, per seed.
+- **Clustering repair** = LoRA(retrained clustered) − retrained clustered.
+- **Fault damage left** = LoRA(retrained faulty) − mean LoRA(retrained
+  clustered) of the same placement. This is Step 10e's "fault-specific gain".
+  Negative means LoRA on the faulty base ends below LoRA on the fault-free base.
+- **R** = (after − before) / (clean − before), per run. It is defined for every
+  faulty run here.
+
+**`sst2-validation-872`:**
+
+| Quantity | Linear | Linear + emb |
+| --- | ---: | ---: |
+| Extra-training effect | −0.42 ± 0.35 [−0.80, −0.11] | 0.00 (epoch 0 selected, 3/3) |
+| Clustering repair | +0.61 ± 0.93 [−0.46, +1.15] | −0.15 ± 0.43 [−0.46, +0.34] |
+| Damage left, 10% | −1.24 ± 0.64 | −0.44 ± 0.81 |
+| Damage left, 20% | −1.05 ± 0.58 | −0.52 ± 0.68 |
+| Damage left, 50% | −3.57 ± 0.63 | −2.68 ± 0.78 |
+| R, 10% | 0.32 ± 0.23 | 0.33 ± 0.30 |
+| R, 20% | 0.74 ± 0.10 | 0.70 ± 0.12 |
+| R, 50% | 0.79 ± 0.05 | 0.79 ± 0.08 |
+
+**`sst2-original-test-1820`:**
+
+| Quantity | Linear | Linear + emb |
+| --- | ---: | ---: |
+| Extra-training effect | +0.62 ± 0.18 [+0.49, +0.82] | 0.00 (epoch 0 selected, 3/3) |
+| Clustering repair | +0.79 ± 0.06 [+0.71, +0.82] | +0.66 ± 0.11 [+0.55, +0.77] |
+| Damage left, 10% | −0.63 ± 0.29 | −0.49 ± 0.26 |
+| Damage left, 20% | −1.03 ± 0.20 | −1.07 ± 0.45 |
+| Damage left, 50% | −2.36 ± 0.40 | −2.56 ± 0.53 |
+| R, 10% | 1.20 ± 0.21 | 1.20 ± 0.21 |
+| R, 20% | 0.97 ± 0.04 | 0.94 ± 0.09 |
+| R, 50% | 0.92 ± 0.02 | 0.91 ± 0.02 |
+
+- R above 1 at 10% on `sst2-original-test-1820` means LoRA ended above the clean
+  model there. LoRA on the retrained clustered base also ends above clean on
+  that set (89.25% vs 88.35%).
+- Seed-matched damage left (subtracting the same-seed clustered run) is in
+  `analysis.json`. It differs from the values above by at most 0.3 pp.
+- The Linear clean runs are the Step 10e clean runs, reproduced exactly (paired
+  difference 0.00 on both test sets for all three seeds). Their extra-training
+  effect has opposite signs on the two test sets, as in Step 10e.
+
+#### Does adapting the embeddings help?
+
+Linear + emb minus Linear, paired by base, pattern, and training seed, in pp.
+The range is in brackets.
+
+| Base | `sst2-validation-872` | `sst2-original-test-1820` |
+| --- | ---: | ---: |
+| clean | +0.42 ± 0.35 [+0.11, +0.80] | −0.62 ± 0.18 [−0.82, −0.49] |
+| retrained clustered | −0.76 ± 1.36 [−1.61, +0.80] | −0.13 ± 0.06 [−0.16, −0.05] |
+| faulty 10% (LoRA) | +0.04 ± 0.53 [−0.46, +0.80] | +0.01 ± 0.26 [−0.33, +0.44] |
+| faulty 20% (LoRA) | −0.23 ± 0.66 [−0.92, +0.92] | −0.17 ± 0.34 [−0.77, +0.16] |
+| faulty 50% (LoRA) | +0.13 ± 1.04 [−0.92, +1.38] | −0.33 ± 0.53 [−1.21, +0.27] |
+| faulty 10% (transfer) | +0.23 ± 0.66 [−0.46, +1.03] | +0.46 ± 0.54 [−0.16, +1.37] |
+| faulty 20% (transfer) | +0.80 ± 1.48 [−0.80, +3.67] | +0.81 ± 1.04 [−0.77, +2.91] |
+| faulty 50% (transfer) | −0.76 ± 3.07 [−6.08, +4.36] | −1.84 ± 3.51 [−8.74, +1.59] |
+
+- **On faulty bases the two placements reached the same accuracy within the
+  spread** at every rate on both test sets: paired means of −0.33 to +0.13 pp
+  against SDs of 0.26–1.04 pp. Every faulty-rate range includes zero.
+- **The clean rows are not a placement effect.** All three Linear + emb clean
+  runs selected epoch 0, so their "after" is the clean base itself. These rows
+  only restate the Linear extra-training effect with the sign flipped.
+- **Retrained clustered:** the `sst2-original-test-1820` difference is −0.13
+  ± 0.06 pp, 1–3 sentences in each of the three seeds. This is far below the
+  0.75 pp sampling SD. On `sst2-validation-872` the spread is 1.36 pp.
+- **Lower damage left for Linear + emb on `sst2-validation-872` is not
+  evidence for embedding adapters.** It is 0.5–0.9 pp lower there because its
+  clustered reference is 0.76 pp lower (87.46% vs 88.23%); its faulty
+  accuracies are the same as Linear's. On `sst2-original-test-1820` the two
+  placements' damage left agrees within 0.2 pp.
+
+#### Transfer: retrained-clustered adapters on faulty patterns, no training
+
+Each cell covers 9 evaluations: 3 adapters × 3 patterns.
+
+- **Gain** = with the adapter minus the same faulty base without it.
+- **Trained − transfer** = mean LoRA trained on that pattern (same placement)
+  minus the transfer accuracy.
+
+**`sst2-validation-872`:**
+
+| Rate | Linear accuracy | Linear gain | Linear trained − transfer | L+emb accuracy | L+emb gain | L+emb trained − transfer |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10% | 85.91 ± 1.17 | +0.13 ± 0.53 | +1.08 ± 0.60 | 86.14 ± 1.44 | +0.36 ± 0.70 | +0.89 ± 0.98 |
+| 20% | 82.20 ± 2.09 | −0.41 ± 1.55 | +4.98 ± 1.94 | 83.00 ± 0.99 | +0.40 ± 0.68 | +3.94 ± 0.99 |
+| 50% | 68.45 ± 4.21 | +0.33 ± 0.99 | +16.20 ± 3.90 | 67.69 ± 5.29 | −0.43 ± 3.24 | +17.10 ± 5.57 |
+
+**`sst2-original-test-1820`:**
+
+| Rate | Linear accuracy | Linear gain | Linear trained − transfer | L+emb accuracy | L+emb gain | L+emb trained − transfer |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10% | 86.93 ± 0.28 | −0.05 ± 0.39 | +1.69 ± 0.24 | 87.39 ± 0.37 | +0.42 ± 0.45 | +1.23 ± 0.39 |
+| 20% | 83.35 ± 0.95 | +0.03 ± 0.98 | +4.88 ± 0.85 | 84.16 ± 0.87 | +0.84 ± 0.89 | +3.89 ± 0.81 |
+| 50% | 69.93 ± 4.29 | +1.53 ± 2.13 | +16.95 ± 4.17 | 68.10 ± 6.75 | −0.31 ± 3.11 | +18.46 ± 6.41 |
+
+- No transfer gain exceeds its spread.
+- Every transfer gain is below the one-run sampling SD except two on
+  `sst2-original-test-1820`: Linear +1.53 pp at 50% (SD 2.13 pp), and
+  Linear + emb +0.84 pp at 20% (SD 0.89 pp).
+- Training on the faulty pattern beat transfer by 1–2 pp at 10%, 4–5 pp at
+  20%, and 16–18 pp at 50%, as in Step 10e.
+
+#### Side by side with Step 10e (Linear adapters only)
+
+**What is compared:** Step 10e Linear LoRA on the old Condition B encoding
+against Step 12c Linear LoRA on the retrained encoding.
+
+- **Same:** fault cells, patterns, training seeds, recipe, and device.
+- **Different:** only the codebook values.
+- **Pairing:** by pattern and seed. Paired = 12c − 10e in pp.
+
+Step 10e had no embedding adapters, so Linear + emb has no Step 10e
+counterpart.
+
+**`sst2-validation-872`:**
+
+| Base | 10e before | 12c before | Paired before | 10e after | 12c after | Paired after | 10e damage left | 12c damage left |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| clustered | 86.24% | 87.61% | +1.38 | 87.84 ± 0.11 | 88.23 ± 0.93 | +0.38 ± 0.93 | — | — |
+| 10% | 84.21 ± 1.54 | 85.78 ± 1.59 | +1.57 ± 0.31 | 87.14 ± 0.70 | 86.98 ± 0.64 | −0.15 ± 0.56 | −0.71 ± 0.70 | −1.24 ± 0.64 |
+| 20% | 81.15 ± 0.36 | 82.61 ± 0.65 | +1.45 ± 0.36 | 87.14 ± 0.52 | 87.18 ± 0.58 | +0.04 ± 0.82 | −0.71 ± 0.52 | −1.05 ± 0.58 |
+| 50% | 68.96 ± 5.61 | 68.12 ± 4.83 | −0.84 ± 3.09 | 84.50 ± 0.96 | 84.65 ± 0.63 | +0.15 ± 0.73 | −3.34 ± 0.96 | −3.57 ± 0.63 |
+
+**`sst2-original-test-1820`:**
+
+| Base | 10e before | 12c before | Paired before | 10e after | 12c after | Paired after | 10e damage left | 12c damage left |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| clustered | 87.97% | 88.46% | +0.49 | 88.90 ± 0.27 | 89.25 ± 0.06 | +0.35 ± 0.33 | — | — |
+| 10% | 85.49 ± 0.20 | 86.98 ± 0.30 | +1.48 ± 0.18 | 88.64 ± 0.26 | 88.62 ± 0.29 | −0.02 ± 0.25 | −0.27 ± 0.26 | −0.63 ± 0.29 |
+| 20% | 81.19 ± 0.91 | 83.32 ± 0.47 | +2.12 ± 0.67 | 88.22 ± 0.35 | 88.22 ± 0.20 | +0.00 ± 0.34 | −0.68 ± 0.35 | −1.03 ± 0.20 |
+| 50% | 69.40 ± 5.86 | 68.41 ± 6.23 | −0.99 ± 3.93 | 86.73 ± 0.80 | 86.89 ± 0.40 | +0.16 ± 0.42 | −2.17 ± 0.80 | −2.36 ± 0.40 |
+
+Transfer accuracy (Linear) on the same patterns:
+
+| Rate | `sst2-validation-872`: 10e | 12c | `sst2-original-test-1820`: 10e | 12c |
+| ---: | ---: | ---: | ---: | ---: |
+| 10% | 85.16 ± 1.27 | 85.91 ± 1.17 | 86.58 ± 0.43 | 86.93 ± 0.28 |
+| 20% | 82.38 ± 1.21 | 82.20 ± 2.09 | 82.99 ± 0.77 | 83.35 ± 0.95 |
+| 50% | 67.35 ± 4.50 | 68.45 ± 4.21 | 68.37 ± 5.03 | 69.93 ± 4.29 |
+
+#### Training behavior of the embedding adapters
+
+Linear + emb trained to a higher loss than Linear **at every half-epoch point
+in all 24 base–seed pairs**. The paired excess shrank over training:
+
+| Epoch | 0.5 | 1.0 | 1.5 | 2.0 |
+| --- | ---: | ---: | ---: | ---: |
+| Training cross-entropy, Linear + emb − Linear (range over 24 pairs) | +0.077 to +0.124 | +0.053 to +0.076 | +0.030 to +0.048 | +0.011 to +0.026 |
+
+- On the clean base, Linear + emb never got back to the base's selection
+  accuracy: 95.58% before training, at most 95.36% afterwards. So all three runs
+  selected epoch 0. Linear's best checkpoints reached 95.66–95.74%.
+- On the retrained clustered base (94.56% before training), Linear + emb's
+  best checkpoints reached 94.84–95.14% selection accuracy, against
+  95.30–95.36% for Linear.
+- The adapters start with exactly zero output. The early disruption is caused
+  by training, not by the starting point.
+- **One possible cause, not tested:** with A ~ N(0, 1), each step on B moves
+  the embedding output by an amount that is large relative to the embedding
+  values.
+- The placement comparison therefore measures embedding adapters **as
+  initialized and trained here**. It does not show that embedding adapters
+  cannot help.
+
+**Interpretation, limited to these measurements:**
+
+- **After Linear LoRA, the retrained baseline ends where the old one did.**
+  - Codebook retraining gave a head start before LoRA of +1.45 to +2.12 pp at
+    10–20%, paired, on both test sets.
+  - After LoRA, the paired differences against Step 10e are −0.15 to +0.16 pp,
+    with SDs of 0.25–0.82 pp.
+  - At 50% neither the starting point nor the result differs beyond the
+    spread.
+- **Fault damage left is not smaller on the retrained baseline.**
+  - The point estimates are 0.2–0.5 pp more negative than Step 10e's.
+  - That follows from a higher LoRA(clustered) reference (+0.35 to +0.38 pp),
+    not from lower faulty accuracy.
+  - The differences are within the spread.
+- **What remains after LoRA:** about 0.4–1.2 pp at 10–20% and 2.4–3.6 pp at 50%,
+  measured against LoRA on the retrained clustered base.
+- **Adapting the embeddings, as done here, did not measurably help.** It cost
+  2.4× the adapter bytes: 12.15% vs 5.08% of the bit-packed model.
+  - On faulty bases both placements end at the same accuracy within the spread
+    on both test sets.
+  - On clean, the selection rule kept the clean model.
+  - This holds even though the embeddings hold 67.6% of the faulted cells.
+- **Transfer of a retrained-clustered adapter gave no gain beyond the spread**
+  for either placement. This is unchanged from Step 10e.
+
+### Run history and provenance
+
+- **Launch:** one detached job (`nohup caffeinate -i`, own session, PID file,
+  stop on first failure), from 18:36:55 to 20:46:04 UTC on 2026-10-29: 2 h 09
+  min, against the 2.1 h estimate.
+  - Linear runs took 135–162 s (mean 144 s).
+  - Linear + emb runs took 142–164 s (mean 151 s).
+  - The 54 transfers took the rest.
+- **Outcome:** no failures, restarts, or reruns. Every run's `verification.json`
+  passed.
+- **Re-verification:** the analysis re-verified all 48 runs and recomputed every
+  table from saved files.
+- **Accepted source change:** `src/fault_lora/training/tinybert_recovery.py`
+  gained dispatch-only hooks (recorded config class, adapter attachment,
+  retrained sources) in `3ce0e5a`, before the matrix started. That change is in
+  `configs/accepted_source_changes.json`. No hash-recorded file changed during
+  the matrix.
+  - Existing Step 10e runs and the Step 12b sweep still re-verify.
+  - Linear clean runs reproduce Step 10e exactly.
+
+### Commands and files
+
+```zsh
+/usr/bin/python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' nohup caffeinate -i ./run_step12c.sh > results/step12c_matrix.log 2>&1 < /dev/null &   # 48 runs + 54 transfers
+# run_step12c.sh calls:
+.venv/bin/python scripts/run_tinybert_retrained_recovery_matrix.py --config configs/tinybert_sst2_lora12c_matrix.json
+.venv/bin/python scripts/analyze_tinybert_retrained_lora_controls.py --config configs/tinybert_sst2_lora12c_controls.json
+```
+
+- `src/fault_lora/training/tinybert_retrained_recovery.py`: retrained-base
+  source checks, the run config with `adapter_placement`, run ids, and the
+  matrix runner with transfers.
+- `src/fault_lora/evaluation/tinybert_retrained_lora_controls.py`: the analysis,
+  tables, figure, and verification. It reads saved runs only.
+- `tests/test_tinybert_retrained_recovery.py`: three offline checks.
+  - Configs and run ids.
+  - Both placements trained, verified, reloaded, and transferred on a tiny
+    retrained chain.
+  - The analysis definitions, placement pairing, and design checks.
+
+| Artifact | Purpose |
+| --- | --- |
+| `results/tinybert-sst2-lora12c-matrix/` | Matrix config, plan, status, `summary.json`/`.csv`, `transfers.json`, manifest. |
+| `results/tinybert-sst2-lora12c-{linear,linear-emb}-{base}-{pattern}-r4-train{seed}/` | 48 runs: config, adapter layout, history, metrics, checkpoints, verification. |
+| `results/tinybert-sst2-lora12c-controls/analysis.json`, `conditions.csv` | All tables above, with per-run values and paired differences. |
+| `…/retrained_lora_controls.png` / `.pdf` | The figure above; byte-identical copies in `docs/figures/`. |
+| `…/verification.json`, `inputs_sha256.json`, `source_sha256.json` | Re-verification, input hashes, and source hashes. |
+| `results/step12c_matrix.log` | The detached job's log. |
+
+The full offline suite passes **135 tests**: 132 at `d2f7c37`, plus the three
+Step 12c checks.
+
+### Limitations
+
+- **Scale:**
+  - 3 patterns per rate, 2 training seeds on faulty bases, and 3 on controls.
+    SDs mix pattern and seed variation.
+  - One Step 12a retraining seed.
+- **Small test sets:** most placement differences are at or below the one-run
+  sampling SD and cannot be resolved with this design.
+- **One embedding-adapter initialization and recipe:** the embedding adapters
+  were not tuned (initialization, learning rate, or rank). The recipe was fixed
+  by the request to keep Step 10e's unchanged.
+- **Cause of the early training disruption:** not investigated.
+- **Fault model and reliable memory:** as in Step 12b. Adapters are assumed
+  stored in reliable memory, with no faults in the adapters.
+
 ## Next steps
 
 9. **Remaining ResNet-18 comparisons:** Step 9b covered matched clean and
@@ -3344,8 +3719,10 @@ new Step 12a/12b checks.
     one pilot, and the [proposed Part 7 matrix](#proposed-part-7-matrix-not-run);
     Step 10e ran it with its transfer evaluations and the controls analysis.
     Step 12a retrained the TinyBERT codebooks with indices fixed, and Step 12b
-    measured fault damage on the retrained Condition B baseline. LoRA on that
-    baseline (Step 12c) has not been run.
+    measured fault damage on the retrained Condition B baseline. Step 12c ran
+    LoRA on that baseline with Linear and Linear + embedding adapters. Still
+    open: other initializations or learning rates for embedding adapters, and
+    why their training starts with a higher loss.
 
 Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,
