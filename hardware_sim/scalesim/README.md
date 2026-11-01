@@ -7,6 +7,7 @@ This package adds a hardware-analysis layer for the Fault-Tolerant-LoRA project 
 The runner in `run_gemm.py` sweeps a small matrix of systolic-array sizes:
 
 - 16x16
+- 32x32
 - 64x64
 - 128x128
 
@@ -40,7 +41,7 @@ case, provide the desired item first:
 ```bash
 python -m hardware_sim.scalesim.run_gemm \
   --test-run \
-  --array-sizes 64,16,128 \
+  --array-sizes 64,16,32,128 \
   --scenarios clustered_lora,faulted_lora,baseline
 ```
 
@@ -69,8 +70,8 @@ python -m hardware_sim.scalesim.run_gemm \
   --config hardware_sim/scalesim/scale_user_bw.cfg \
   --layout ../scale-sim-v3/layouts/conv_nets/test.csv \
   --out results/hardware_sim/scalesim \
-  --array-sizes 16,64,128 \
-  --scenarios baseline,clustered_lora,faulted_lora
+  --array-sizes 16,32,64,128 \
+  --scenarios baseline,clustered_lora
 ```
 
 For a dry-run with no simulator execution:
@@ -94,9 +95,27 @@ python -m hardware_sim.scalesim.run_gemm --dry-run
    size, using the selected fixed bandwidth.
 4. For each requested case, it runs SCALE-Sim with the selected config,
    workload CSV, and layout, then reads each `COMPUTE_REPORT.csv`.
-5. It sums the reported cycle counts and writes `sweep_summary.csv`; full
-   simulator reports are kept under the corresponding `pe<size>/<scenario>/`
-   output directory.
+5. It sums the reported cycle counts and records mapping efficiency and
+   compute utilization for each reported workload layer. `sweep_summary.csv`
+   includes the unweighted mean of those layer percentages for each case;
+   `layer_metrics.csv` retains the individual layer values and inactive-PE
+   estimates. Full simulator reports are kept under the corresponding
+   `pe<size>/<scenario>/` output directory.
+
+### Mapping efficiency and array utilization
+
+SCALE-Sim's **Mapping Efficiency %** is the average, across mapping folds, of
+the fraction of PE slots assigned useful MACs. **Compute Util %** measures
+useful PE-cycle work as a fraction of all array PE-cycles, so it also reflects
+pipeline and fold effects; it is not interchangeable with mapping efficiency.
+The sweep retains each metric per layer and reports an unweighted arithmetic
+mean across layers in `sweep_summary.csv`.
+
+For each layer, `layer_metrics.csv` also reports **inactive PE equivalents**:
+`array_size² × (1 − Compute Util % / 100)`. This is the average number of PEs
+not doing useful compute over the modeled PE-cycles, derived from utilization.
+It is not a count of distinct physical PEs that were ever idle. The summary
+value is the unweighted mean of these layer-level estimates.
 
 Regenerate the baseline workload after changing the input resolution or batch
 size:

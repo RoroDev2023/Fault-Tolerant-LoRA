@@ -196,10 +196,14 @@ After confirming the one-case result, request the full sweep:
 
 ```bash
 export SCALESIM_MODE=sweep
-export SCALESIM_ARRAY_SIZES=16,64,128
-export SCALESIM_SCENARIOS=clustered_lora
+export SCALESIM_ARRAY_SIZES=16,32,64,128
+export SCALESIM_SCENARIOS=baseline,clustered_lora
 sbatch ... hpc/slurm/scalesim_job.sbatch
 ```
+
+The SCALE-Sim output includes `sweep_summary.csv` with per-case cycle totals
+and mean mapping-efficiency/utilization metrics, plus `layer_metrics.csv` with
+per-layer values and derived inactive-PE equivalents.
 
 Optional inputs include `SCALESIM_WORKLOADS`, `SCALESIM_CONFIG`,
 `SCALESIM_OUTPUT`, and `SCALESIM_BANDWIDTH`. `SCALESIM_CONFIG` determines

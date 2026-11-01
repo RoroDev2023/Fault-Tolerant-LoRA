@@ -13,12 +13,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
+import statistics
 import sys
 from pathlib import Path
 from typing import Iterable
 
 
-DEFAULT_ARRAY_SIZES = (16, 64, 128)
+DEFAULT_ARRAY_SIZES = (16, 32, 64, 128)
 SCENARIO_LABELS = {
     "baseline": "baseline_resnet",
     "clustered_lora": "clustered_resnet_lora",
@@ -82,6 +84,103 @@ def report_rows(compute_report: Path) -> list[dict[str, str]]:
                 result[key] = result[key].strip()
         normalized.append(result)
     return normalized
+
+
+def read_workload_layer_names(workload_path: Path) -> list[str]:
+    with workload_path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        name_column = next(
+            (column for column in reader.fieldnames or () if column.strip() == "Layer name"),
+            None,
+        )
+        if name_column is None:
+            raise ValueError(f"Missing 'Layer name' column in workload {workload_path}")
+        return [row[name_column].strip() for row in reader]
+
+
+def collect_layer_metrics(
+    rows: list[dict[str, str]],
+    workload_path: Path,
+    array_size: int,
+    scenario: str,
+    component: str,
+) -> list[dict[str, object]]:
+    layer_names = read_workload_layer_names(workload_path)
+    if len(rows) != len(layer_names):
+        raise ValueError(
+            f"Compute report for {workload_path} has {len(rows)} layers; "
+            f"the workload has {len(layer_names)}"
+        )
+
+    metrics = []
+    for index, row in enumerate(rows):
+        try:
+            mapping_efficiency = float(row["Mapping Efficiency %"])
+            compute_utilization = float(row["Compute Util %"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Missing or invalid mapping/utilization metrics for layer {index} "
+                f"in the report for {workload_path}"
+            ) from exc
+        if (
+            not math.isfinite(mapping_efficiency)
+            or not math.isfinite(compute_utilization)
+            or not 0 <= mapping_efficiency <= 100
+            or not 0 <= compute_utilization <= 100
+        ):
+            raise ValueError(
+                f"Invalid mapping/utilization percentages for layer {index} "
+                f"in the report for {workload_path}"
+            )
+        metrics.append({
+            "array_size": array_size,
+            "scenario": scenario,
+            "workload_component": component,
+            "layer_id": row.get("LayerID", str(index)).strip(),
+            "layer_name": layer_names[index],
+            "mapping_efficiency_percent": mapping_efficiency,
+            "compute_utilization_percent": compute_utilization,
+            "inactive_pe_equivalents": array_size**2 * (1 - compute_utilization / 100),
+        })
+    return metrics
+
+
+def summarize_layer_metrics(metrics: list[dict[str, object]]) -> dict[str, float | str]:
+    if not metrics:
+        return {
+            "mean_mapping_efficiency_percent": "",
+            "mean_compute_utilization_percent": "",
+            "mean_inactive_pe_equivalents": "",
+        }
+    return {
+        "mean_mapping_efficiency_percent": statistics.mean(
+            float(row["mapping_efficiency_percent"]) for row in metrics
+        ),
+        "mean_compute_utilization_percent": statistics.mean(
+            float(row["compute_utilization_percent"]) for row in metrics
+        ),
+        "mean_inactive_pe_equivalents": statistics.mean(
+            float(row["inactive_pe_equivalents"]) for row in metrics
+        ),
+    }
+
+
+def write_layer_metrics(path: Path, results: list[dict[str, object]]) -> None:
+    fieldnames = [
+        "array_size",
+        "scenario",
+        "workload_component",
+        "layer_id",
+        "layer_name",
+        "mapping_efficiency_percent",
+        "compute_utilization_percent",
+        "inactive_pe_equivalents",
+    ]
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for result in results:
+            writer.writerows(result.get("layer_metrics", []))
 
 
 def tally(rows: Iterable[dict[str, str]]) -> tuple[int, int]:
@@ -158,6 +257,8 @@ def run_single_case(array_size: int, scenario: str, cfg_path: Path, workload_dir
             "status": "dry_run",
             "total_cycles": 0,
             "prefetch_cycles": 0,
+            **summarize_layer_metrics([]),
+            "layer_metrics": [],
         }
 
     ensure_scalesim()
@@ -172,12 +273,18 @@ def run_single_case(array_size: int, scenario: str, cfg_path: Path, workload_dir
     base_report = maybe_execute_simulation(cfg_path, base_workload, output_dir / "base", layout_path)
     base_rows = report_rows(base_report)
     total_cycles, prefetch_cycles = tally(base_rows)
+    layer_metrics = collect_layer_metrics(
+        base_rows, base_workload, array_size, scenario, "base"
+    )
     if scenario == "baseline":
         total_lora_cycles = total_lora_prefetch = 0
     else:
         lora_report = maybe_execute_simulation(cfg_path, lora_workload, output_dir / "lora", layout_path)
         lora_rows = report_rows(lora_report)
         total_lora_cycles, total_lora_prefetch = tally(lora_rows)
+        layer_metrics.extend(collect_layer_metrics(
+            lora_rows, lora_workload, array_size, scenario, "lora"
+        ))
 
     result = {
         "array_size": array_size,
@@ -189,6 +296,8 @@ def run_single_case(array_size: int, scenario: str, cfg_path: Path, workload_dir
         "status": "executed",
         "total_cycles": total_cycles + total_lora_cycles,
         "prefetch_cycles": prefetch_cycles + total_lora_prefetch,
+        **summarize_layer_metrics(layer_metrics),
+        "layer_metrics": layer_metrics,
     }
     return result
 
@@ -222,8 +331,8 @@ def main():
                         help="layout CSV used by SCALE-Sim")
     parser.add_argument("--out", type=Path, default=Path("results/hardware_sim/scalesim"),
                         help="directory for the sweep output")
-    parser.add_argument("--array-sizes", type=str, default="16,64,128",
-                        help="Comma-separated PE array sizes to simulate, e.g. 16,64,128")
+    parser.add_argument("--array-sizes", type=str, default="16,32,64,128",
+                        help="Comma-separated PE array sizes to simulate, e.g. 16,32,64,128")
     parser.add_argument("--scenarios", type=str, default="baseline,clustered_lora,faulted_lora",
                         help="Comma-separated scenarios to run")
     parser.add_argument("--bandwidth", type=int, default=10, help="User-mode bandwidth for generated configs")
@@ -261,11 +370,14 @@ def main():
     summary = build_summary(results)
     out_csv = args.out / "sweep_summary.csv"
     args.out.mkdir(parents=True, exist_ok=True)
+    write_layer_metrics(args.out / "layer_metrics.csv", summary)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     with out_csv.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=[
             "array_size", "scenario", "description", "status", "base_workload", "lora_workload",
-            "total_cycles", "prefetch_cycles", "overhead_vs_baseline", "config",
+            "total_cycles", "prefetch_cycles", "mean_mapping_efficiency_percent",
+            "mean_compute_utilization_percent", "mean_inactive_pe_equivalents",
+            "overhead_vs_baseline", "config",
         ])
         writer.writeheader()
         for row in summary:
@@ -273,7 +385,9 @@ def main():
                 key: row.get(key, "")
                 for key in [
                     "array_size", "scenario", "description", "status", "base_workload", "lora_workload",
-                    "total_cycles", "prefetch_cycles", "overhead_vs_baseline", "config",
+                    "total_cycles", "prefetch_cycles", "mean_mapping_efficiency_percent",
+                    "mean_compute_utilization_percent", "mean_inactive_pe_equivalents",
+                    "overhead_vs_baseline", "config",
                 ]
             })
 
