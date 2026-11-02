@@ -3975,6 +3975,292 @@ Step 13a checks.
 - **Encoding storage:** codebooks, mappings, biases, and normalization state are
   excluded from the budget and assumed reliable.
 
+## Step 13b: level-dependent faults and level-0 protection (ResNet-18, evaluation only)
+
+**Purpose:** replace the uniform fault rate with the per-level read errors of the
+Step 13a device model, and test the mentor's suggestion to protect level 0.
+
+**Key question:** if the most common cluster is stored on a fault-free level 0,
+does the damage go down compared with the current sorted mapping, and by how
+much?
+
+**Scope:** evaluation only. Weights are not trained and no LoRA is used. The
+only repair measured is BatchNorm recalibration (the Step 9b method,
+unchanged).
+
+![Realized cell fault rate, test accuracy with no repair, and test accuracy after BatchNorm recalibration versus sigma over window, for the sorted mapping, sorted with level 0 protected, and most frequent cluster on protected level 0.](docs/figures/resnet18-cifar10-step13b-level-faults.png)
+
+[Download the PDF figure](docs/figures/resnet18-cifar10-step13b-level-faults.pdf).
+
+### Method
+
+- **Level-dependent simulator** (new sibling module
+  `src/fault_lora/memory/level_faults.py`; pattern kind
+  `static_level_dependent_adjacent_levels_v1`).
+  - **Probabilities:** each 16-level cell is read one level down with
+    probability p_down[level] and one level up with p_up[level]. Both come from
+    the Step 13a Gaussian model: Q(Δ / 2σ) per existing neighbor, Δ =
+    window / 15. Level 0 is optionally fault-free.
+  - **One random draw per cell:** u < p_down means down; p_down ≤ u <
+    p_down + p_up means up.
+  - **Pairing:** with the same seed, every condition sees the same random number
+    at each cell position. The level-0-protected pattern is therefore exactly
+    the unprotected one minus its level-0 cells.
+  - **Storage and decoding:** patterns use the existing sparse layout
+    (positions, before levels, after levels). They are applied through the
+    existing `decode_state` / `decode_layer`.
+- **Two cluster-to-level mappings** on the Step 11a `codebook-bnstats` encoding.
+  These are design-time choices. Indices and codebook values are unchanged;
+  only `index_to_level` / `level_to_index` differ.
+  - **`sorted`** (current): the identity mapping. Level 0 is the most negative
+    cluster.
+  - **`frequent-at-0`:** per tensor, the most frequently used cluster goes on
+    level 0, and the other 15 go in sorted order on levels 1–15.
+  - **Decoding check:** the fault-free model decodes identically under both
+    mappings (every state tensor compared exactly).
+  - **Reference reproduction:** the fault-free accuracy reproduces the Step 11b
+    record exactly. The fault-free BatchNorm recalibration reproduces Step 11c
+    exactly (0 differences on both splits).
+- **Conditions, declared before running:**
+  - σ / window ∈ {0.013, 0.020, 0.026}. These give about 1%, 10%, and 20%
+    faults under the sorted mapping (Step 13a inversion).
+  - Three conditions: `sorted`, `sorted` + level 0 protected, and
+    `frequent-at-0` + level 0 protected.
+  - Pattern seeds 1300–1304.
+  - That makes 45 patterns, plus the fault-free reference. Each was measured
+    with no repair and after BatchNorm recalibration (5,000 unlabeled training
+    images, seed 42).
+- **Audit of every pattern** (Step 6 style), all of which passed:
+  - seeded regeneration is identical;
+  - the saved file round-trips;
+  - the existing independent decoding oracle (`inspect_transitions`) matches
+    the applied state. That confirms only ±1 transitions, edges moving inward,
+    and every unselected weight and reliable tensor unchanged.
+  - a protected level 0 never faults;
+  - no zero-probability transition occurs;
+  - the realized per-level, per-direction counts match the requested
+    probabilities: |z| ≤ 5 was required, and the largest observed over all 45
+    patterns × 32 cells was 2.92;
+  - the pattern is rejected by the other mapping's encoding (fingerprint
+    binding).
+
+### Mapping report: share of cells on level 0, and the level 1 → 0 jump
+
+Across the 21 tensors (cell-weighted), level 0 holds **0.25%** of cells under
+`sorted` and **13.1%** under `frequent-at-0` (12.1–33.2% per tensor).
+
+- **Where the most frequent cluster sits:** always sorted index 6, 7, or 8, the
+  near-zero weights.
+- **What level 1 becomes:** under `frequent-at-0`, level 1 is the most negative
+  cluster (0.25% of cells). A fault from level 1 down to level 0 now decodes to
+  the frequent cluster's value.
+- **The size of that jump:** median **11.1×** the sorted mapping's median
+  neighbor gap (range 6.8–17.6×).
+
+| Tensor | Cells | Frequent index | Level-0 share, sorted | Level-0 share, frequent-at-0 | Level 1→0 jump (frequent-at-0) | Sorted median neighbor gap | Jump ÷ gap |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `conv1.weight` | 9,408 | 6 | 0.50% | 33.2% | 0.6021 | 0.0750 | 8.0× |
+| `fc.weight` | 5,120 | 7 | 0.80% | 13.2% | 0.1343 | 0.0199 | 6.8× |
+| `layer1.0.conv1.weight` | 36,864 | 8 | 0.11% | 28.2% | 0.4939 | 0.0401 | 12.3× |
+| `layer1.0.conv2.weight` | 36,864 | 8 | 0.04% | 15.7% | 0.3260 | 0.0185 | 17.6× |
+| `layer1.1.conv1.weight` | 36,864 | 7 | 0.09% | 18.8% | 0.4159 | 0.0383 | 10.8× |
+| `layer1.1.conv2.weight` | 36,864 | 8 | 0.15% | 15.5% | 0.2494 | 0.0207 | 12.1× |
+| `layer2.0.conv1.weight` | 73,728 | 8 | 0.27% | 15.2% | 0.1989 | 0.0203 | 9.8× |
+| `layer2.0.conv2.weight` | 147,456 | 8 | 0.14% | 16.2% | 0.2055 | 0.0185 | 11.1× |
+| `layer2.0.downsample.0.weight` | 8,192 | 7 | 0.31% | 19.7% | 0.4596 | 0.0433 | 10.6× |
+| `layer2.1.conv1.weight` | 147,456 | 7 | 0.11% | 16.1% | 0.2076 | 0.0178 | 11.7× |
+| `layer2.1.conv2.weight` | 147,456 | 7 | 0.14% | 13.8% | 0.1528 | 0.0126 | 12.1× |
+| `layer3.0.conv1.weight` | 294,912 | 7 | 0.09% | 15.9% | 0.1850 | 0.0163 | 11.3× |
+| `layer3.0.conv2.weight` | 589,824 | 7 | 0.10% | 13.8% | 0.1494 | 0.0102 | 14.6× |
+| `layer3.0.downsample.0.weight` | 32,768 | 7 | 0.16% | 16.0% | 0.1827 | 0.0174 | 10.5× |
+| `layer3.1.conv1.weight` | 589,824 | 7 | 0.11% | 13.6% | 0.1250 | 0.0095 | 13.1× |
+| `layer3.1.conv2.weight` | 589,824 | 8 | 0.09% | 14.0% | 0.1198 | 0.0100 | 12.0× |
+| `layer4.0.conv1.weight` | 1,179,648 | 7 | 0.25% | 12.3% | 0.0745 | 0.0073 | 10.3× |
+| `layer4.0.conv2.weight` | 2,359,296 | 7 | 0.09% | 12.9% | 0.0802 | 0.0074 | 10.8× |
+| `layer4.0.downsample.0.weight` | 131,072 | 7 | 0.09% | 14.4% | 0.2003 | 0.0154 | 13.0× |
+| `layer4.1.conv1.weight` | 2,359,296 | 7 | 0.32% | 12.1% | 0.0642 | 0.0070 | 9.2× |
+| `layer4.1.conv2.weight` | 2,359,296 | 6 | 0.52% | 12.6% | 0.0369 | 0.0049 | 7.5× |
+
+**A second effect of the remap, found in the results:** removing the frequent
+cluster from the middle of the sorted order makes its two neighbors adjacent
+levels.
+
+- Those neighbors (indices f − 1 and f + 1) are the next most used clusters.
+- A fault between them now skips a cluster, so it changes the weight by about
+  two codebook gaps instead of one.
+- The diagnostic below measures how much this matters.
+
+### Results: accuracy and realized fault rate
+
+Values are mean ± sample SD over 5 pattern seeds. The fault-free reference is
+**91.09%** test (91.84% validation) with no repair, and **90.72%** test (90.80%
+validation) after recalibration.
+
+**Test split (10,000 images):**
+
+| σ / window | Condition | Realized cell fault rate | No repair | BN recalibrated | BN gain (pp) |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 0.013 | sorted | 1.03% | 90.43 ± 0.53 | 90.50 ± 0.24 | +0.07 ± 0.40 |
+| 0.013 | sorted + level 0 protected | 1.03% | 90.46 ± 0.50 | 90.48 ± 0.27 | +0.01 ± 0.38 |
+| 0.013 | frequent-at-0 + level 0 protected | 0.90% | 90.20 ± 0.61 | 90.51 ± 0.17 | +0.31 ± 0.46 |
+| 0.020 | sorted | 9.54% | 78.10 ± 6.67 | 89.07 ± 0.48 | +10.97 ± 6.36 |
+| 0.020 | sorted + level 0 protected | 9.53% | 77.72 ± 7.03 | 89.04 ± 0.47 | +11.31 ± 6.65 |
+| 0.020 | frequent-at-0 + level 0 protected | 8.30% | 75.54 ± 5.79 | 88.76 ± 0.45 | +13.22 ± 5.40 |
+| 0.026 | sorted | 19.95% | 69.66 ± 8.41 | 87.79 ± 0.35 | +18.13 ± 8.68 |
+| 0.026 | sorted + level 0 protected | 19.92% | 70.46 ± 6.60 | 87.81 ± 0.40 | +17.35 ± 6.94 |
+| 0.026 | frequent-at-0 + level 0 protected | 17.36% | 56.65 ± 13.23 | 87.00 ± 0.40 | +30.35 ± 13.11 |
+
+**Validation split (5,000 held-out training images):**
+
+| σ / window | sorted: no repair / BN | sorted + level 0 protected | frequent-at-0 + level 0 protected |
+| ---: | --- | --- | --- |
+| 0.013 | 91.08 ± 0.22 / 90.79 ± 0.12 | 91.12 ± 0.19 / 90.80 ± 0.16 | 90.92 ± 0.55 / 90.78 ± 0.17 |
+| 0.020 | 78.13 ± 6.99 / 89.31 ± 0.38 | 77.80 ± 7.48 / 89.38 ± 0.35 | 76.11 ± 5.49 / 88.81 ± 0.31 |
+| 0.026 | 70.10 ± 8.86 / 88.07 ± 0.56 | 70.72 ± 7.19 / 88.07 ± 0.36 | 56.68 ± 13.51 / 87.24 ± 0.63 |
+
+Realized rates match the requested averages: the largest deviation is 0.021 pp,
+and the SD across seeds is at most 0.01 pp.
+
+**Paired against `sorted`** (same σ and seed; condition minus sorted, in pp;
+range in brackets):
+
+| σ / window | Condition | Test, no repair | Test, BN | Validation, no repair | Validation, BN |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 0.013 | sorted + level 0 protected | +0.04 ± 0.09 [−0.08, +0.17] | −0.02 ± 0.04 [−0.07, +0.02] | +0.04 ± 0.07 | +0.02 ± 0.06 |
+| 0.020 | sorted + level 0 protected | −0.37 ± 0.92 [−1.61, +0.40] | −0.03 ± 0.08 [−0.10, +0.10] | −0.32 ± 1.01 | +0.06 ± 0.12 |
+| 0.026 | sorted + level 0 protected | +0.80 ± 2.86 [−3.84, +3.38] | +0.02 ± 0.15 [−0.13, +0.21] | +0.62 ± 2.86 | 0.00 ± 0.30 |
+| 0.013 | frequent-at-0 + level 0 protected | −0.23 ± 0.25 [−0.65, +0.03] | +0.01 ± 0.13 [−0.19, +0.16] | −0.16 ± 0.44 [−0.82, +0.18] | −0.00 ± 0.15 [−0.18, +0.14] |
+| 0.020 | frequent-at-0 + level 0 protected | −2.55 ± 4.15 [−9.67, +0.61] | **−0.31 ± 0.16 [−0.48, −0.12]** | −2.02 ± 3.79 [−8.38, +0.40] | **−0.50 ± 0.12 [−0.64, −0.34]** |
+| 0.026 | frequent-at-0 + level 0 protected | **−13.01 ± 6.19 [−17.73, −2.33]** | **−0.79 ± 0.58 [−1.82, −0.45]** | **−13.41 ± 6.05 [−18.22, −3.34]** | **−0.83 ± 0.46 [−1.54, −0.38]** |
+
+Bold marks differences whose range excludes zero: all 5 seeds have the same
+sign.
+
+### Diagnostic: decoded weight error of the saved patterns
+
+This reads the saved patterns only (new run
+`resnet18-cifar10-level-faults-seed1300-weight-errors`). For each fault, Δw is
+the decoded weight change, in units of that tensor's median sorted neighbor
+gap. Values are means over 5 seeds.
+
+| σ / window | Condition | Mean \|Δw\| per fault (gaps) | Faults landing ≥ 2 clusters away | Mean Δw² per cell (gaps²) | Total ΣΔw² (raw) |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 0.013 | sorted | 0.919 | 0% | 0.0121 | 10.3 |
+| 0.013 | sorted + level 0 protected | 0.916 | 0% | 0.0119 | 10.2 |
+| 0.013 | frequent-at-0 + level 0 protected | 1.066 | 14.6% | 0.0145 | 12.3 |
+| 0.020 | sorted | 0.918 | 0% | 0.1107 | 94.2 |
+| 0.020 | sorted + level 0 protected | 0.915 | 0% | 0.1093 | 92.9 |
+| 0.020 | frequent-at-0 + level 0 protected | 1.063 | 14.5% | 0.1325 | 112.5 |
+| 0.026 | sorted | 0.918 | 0% | 0.2318 | 197.9 |
+| 0.026 | sorted + level 0 protected | 0.915 | 0% | 0.2288 | 194.9 |
+| 0.026 | frequent-at-0 + level 0 protected | 1.063 | 14.5% | 0.2773 | 236.8 |
+
+- **Where the long jumps come from:** at σ / window = 0.026, `frequent-at-0`
+  faults are 85.5% one-cluster, 14.35% two-cluster (between f − 1 and f + 1),
+  and 0.15% six-to-eight-cluster (level 1 → 0).
+- **Net effect:** the remap removes 13% of faults but raises the total squared
+  weight error by about 20% at every σ.
+
+**Interpretation, limited to these measurements:**
+
+- **Protecting level 0 under the sorted mapping does nothing measurable.** It
+  protects 0.25% of cells and cuts the fault rate by 0.03 pp. No-repair
+  accuracy moves by up to ±3.8 pp per seed, but in both directions (mean
+  +0.80 ± 2.86 at 0.026). BN-recalibrated accuracy moves by at most 0.46 pp.
+  - That spread is the no-repair noise floor at 10–20% faults: patterns that
+    differ in only 2,777–2,857 of 11.2M cells changed accuracy by several pp.
+- **Putting the most common cluster on a protected level 0 increases damage**,
+  even though it has 13% fewer faults (17.4% vs 20.0% at 0.026; 8.3% vs 9.5% at
+  0.020).
+  - At 0.026 it costs **−13.0 pp** with no repair and **−0.8 pp** after
+    recalibration on the test split, against sorted. All 5 seeds are worse on
+    both splits.
+  - At 0.020 it costs −0.3 pp (test) and −0.5 pp (validation) after
+    recalibration, again on all 5 seeds. The no-repair result is mixed.
+  - At 0.013 no difference exceeds the spread.
+- **The diagnostic shows why:**
+  - 14.5% of the remaining faults now skip a cluster, between the frequent
+    cluster's two most used neighbors.
+  - A few level 1 → 0 reads jump 6–8 clusters.
+  - Total squared weight error rises by about 20%.
+- **BatchNorm recalibration recovers most of the no-repair damage under every
+  mapping:** to within 1.6–3.7 pp of the fault-free BN reference at 10–20%. It
+  also shrinks the mapping difference from −13 pp to −0.8 pp.
+- **Caveats on scope:** this mapping, in these conditions, makes protecting
+  level 0 harmful. It does not rule out a protected level 0 combined with an
+  ordering that keeps neighbors one gap apart, such as Donato et al.'s
+  minimum-distance mappings (Table 3). That was not tested.
+
+### Commands and files
+
+```zsh
+/usr/bin/python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' nohup caffeinate -i ./run_step13b.sh > results/step13b_level_faults.log 2>&1 < /dev/null &
+# run_step13b.sh calls:
+.venv/bin/python scripts/run_level_fault_sweep.py --config configs/resnet18_cifar10_level_faults.json
+.venv/bin/python scripts/analyze_level_fault_errors.py   # weight-error diagnostic, reads saved patterns only
+```
+
+- **Run history:** one detached job, 17:10:58–17:21:58 UTC on 2026-11-02 (621 s
+  on MPS: about 13 s per condition including the audit). No failures or
+  reruns.
+  - Verification passed: all 45 records, re-hashed and re-summarized patterns,
+    45 audits, identical fault-free decoding under both mappings, a recomputed
+    aggregate, CSV equal to JSON, 62 input artifacts, and unchanged source.
+  - No hash-recorded file was edited; all code is in new files.
+- `src/fault_lora/memory/level_faults.py`: Gaussian per-level probabilities,
+  pattern generation, validation and per-level counts, apply, z-scores, and the
+  two mappings with the mapping report.
+- `src/fault_lora/evaluation/level_fault_sweep.py`: verified Step 11b sources,
+  the fault-free reproduction checks, the per-pattern audit, no-repair and
+  BatchNorm-recalibration measurements, aggregation with pairing, the figure,
+  and verification.
+- `src/fault_lora/evaluation/level_fault_errors.py`: the weight-error
+  diagnostic.
+- `tests/test_level_faults.py`: eight offline checks.
+  - The probabilities match Step 13a.
+  - Patterns are adjacent-only, seeded, and match per-level rates; level 0 is
+    protected; protected patterns nest inside unprotected ones.
+  - Tampered and mismatched patterns are rejected.
+  - Mapping decode equality, fingerprint rebinding, and the level 1 → 0 value.
+  - An end-to-end tiny sweep with audit, verification, and pairing.
+  - The audit rejects altered copies and wrong states.
+  - Invalid configurations are rejected.
+  - The diagnostic's cluster distances.
+
+| Artifact | Purpose |
+| --- | --- |
+| `results/resnet18-cifar10-level-faults-seed1300/measurements.json`, `.csv`, `conditions/` | Every pattern's counts and accuracy on both splits, with no repair and with BN recalibration. |
+| `…/aggregate.json` | Per σ × condition statistics and paired differences against `sorted`. |
+| `…/reference.json` | Fault-free reference and its Step 11b / 11c reproduction. |
+| `…/mapping_report.json`, `.csv` | The per-tensor table above. |
+| `…/probabilities.json` | Per-level down/up probabilities for every σ and condition. |
+| `…/audit/*.json` | Per-pattern audit, including the per-level z-scores. |
+| `…/level_faults.png` / `.pdf` | The figure above; byte-identical copies in `docs/figures/`. |
+| `…/verification.json`, `manifest.json` | Checks and input hashes. |
+| `checkpoints/resnet18-cifar10-level-faults-seed1300/` | Both mapped encodings, 45 patterns, and BN statistics (492 MB). |
+| `results/resnet18-cifar10-level-faults-seed1300-weight-errors/` | The diagnostic. |
+
+The full offline suite passes **149 tests**: 141 at `3906ec2`, plus the eight
+Step 13b checks.
+
+### Limitations and open decisions
+
+- **σ / window is still assumed.** The three values are chosen to reproduce
+  1/10/20% faults. They are not device measurements.
+  - Step 13a found that a 128 MB budget alone would select one-bit cells. These
+    conditions assume 16-level cells are used anyway.
+- **One alternative mapping.** Minimum-distance orderings that protect the
+  frequent cluster without separating its neighbors were not tested. Whether to
+  try them is a decision for you or your mentor.
+- **Same σ for every level.** A protected level 0 is modeled as fault-free; the
+  levels next to it keep their nominal error rates. A real wider Δ_init would
+  also reduce level 1 → 0 reads.
+- **Small samples:** 5 seeds per cell of the table. The no-repair SDs are 5–13
+  pp at 10–20% faults, so only differences where all seeds share a sign are
+  called effects.
+- **Scope:** ResNet-18 only. TinyBERT and LoRA are not included (Part B, later
+  stages).
+
 ## Next steps
 
 9. **Remaining ResNet-18 comparisons:** Step 9b covered matched clean and
@@ -3996,8 +4282,11 @@ Step 13a checks.
     why their training starts with a higher loss.
 11. **Hardware-derived fault rates:** Step 13a turned an on-chip budget into a
     cell fault probability, conditional on σ / window, which the hardware team
-    still has to supply. A level-dependent fault simulator and reruns at the
-    derived rate (Part B) have not been started.
+    still has to supply.
+    Step 13b added the level-dependent simulator and evaluated two
+    cluster-to-level mappings on ResNet-18 with no repair and BN
+    recalibration. Still open: minimum-distance mappings, TinyBERT, and LoRA
+    at these rates.
 
 Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,

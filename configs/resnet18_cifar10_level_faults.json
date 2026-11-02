@@ -1,0 +1,47 @@
+{
+  "run_id": "resnet18-cifar10-level-faults-seed1300",
+  "source_sweep_results": "results/resnet18-cifar10-retrained-fault-sweep-seed42",
+  "source_audit_results": "results/resnet18-cifar10-retrained-fault-checks-seed42",
+  "step11c_bn_results": "results/resnet18-cifar10-retrained-bn-recalibration-seed42",
+  "clean_checkpoint_sha256": "7a9d200cbce14c01ddadb68c3a94ce8a9a7990a4cfcdfb7d9f5ae4bdfac47439",
+  "sigmas": [
+    0.013,
+    0.02,
+    0.026
+  ],
+  "conditions": [
+    {
+      "condition_id": "sorted",
+      "mapping": "sorted",
+      "level0_safe": false
+    },
+    {
+      "condition_id": "sorted-l0safe",
+      "mapping": "sorted",
+      "level0_safe": true
+    },
+    {
+      "condition_id": "frequent-l0safe",
+      "mapping": "frequent-at-0",
+      "level0_safe": true
+    }
+  ],
+  "seeds": [
+    1300,
+    1301,
+    1302,
+    1303,
+    1304
+  ],
+  "z_threshold": 5.0,
+  "calibration_examples": 5000,
+  "calibration_batch_size": 250,
+  "calibration_seed": 42,
+  "evaluation_batch_size": 256,
+  "device": "mps",
+  "cpu_threads": 4,
+  "num_workers": 2,
+  "data_root": "data",
+  "results_root": "results",
+  "checkpoint_root": "checkpoints"
+}
