@@ -3704,6 +3704,277 @@ Step 12c checks.
 - **Fault model and reliable memory:** as in Step 12b. Adapters are assumed
   stored in reliable memory, with no faults in the adapters.
 
+## Hardware-derived fault rate (Step 13a)
+
+**Purpose:** turn an on-chip memory budget into a cell fault probability. The
+question is how many cells the clustered weights need, how many levels per cell
+the budget forces, and what fault probability that number of levels implies
+for a given device.
+
+This step is analytic. It trains nothing, samples no faults, and reruns no
+experiment. It reads only the saved encodings: their weight count and how often
+each physical level is used.
+
+### Assumptions, in plain language
+
+- **Megabytes:** 1 MB = 2^20 bytes = 8,388,608 bits (or one-bit cells).
+- **Storage need:** each weight stores a cluster index of ceil(log2 k) bits
+  (4 bits for k = 16).
+  - Codebooks are reported separately and assumed stored reliably elsewhere.
+  - Indices are packed back to back into cells of b bits (L = 2^b levels).
+  - Cells needed = ceil(N × index bits / b).
+- **Two meanings of the budget** (both always printed):
+  - **`slc-area`** (default): the budget is the area of budget_mb × 8 × 2^20
+    one-bit cells, and a multi-level cell takes the same area. Packing more bits
+    per cell therefore stretches the budget.
+  - **`capacity`**: the budget is a number of stored bits, at whatever density.
+    Here the number of levels per cell does not change whether the model fits.
+- **Device model:**
+  - The L levels are evenly spaced across one fixed read window, the same
+    window for every b. So spacing Δ = window / (L − 1).
+  - Each level reads as a Gaussian with the same σ, given as
+    **`sigma_over_window`** (σ divided by the full window).
+  - Thresholds sit halfway between neighbors. Each existing neighbor is
+    therefore read with probability Q(Δ / 2σ). Interior levels have two
+    neighbors; edge levels have one.
+  - Jumps of two or more levels are left out of the fault probability. Their
+    probability Q(3Δ / 2σ) per direction is reported.
+- **`--level0-safe`:** level 0 is never misread. Level 1 can still be misread
+  as level 0.
+- **Level use:**
+  - "Occupancy" weights each level by how often it occurs in the saved
+    encoding. The bit stream is the tensors in sorted name order, row-major,
+    with index bits most significant first, cut into b-bit cells; a cell's
+    bits are read as a binary number.
+  - For b = 4 this is exactly the per-level histogram.
+  - "Uniform" weights all levels equally.
+- **Runnable now:** only b = 4, one 16-level cell per 4-bit index, matches the
+  current simulator. b = 1–3 need several cells per index, or cells that
+  straddle two indices. They are reported, but need a multi-cell simulator that
+  does not exist yet.
+- **Not modeled:** faults are independent and static. Retention drift,
+  temperature, write errors, and sensing-circuit area are not modeled.
+
+### Where the device numbers come from
+
+The source is Donato et al., DAC 2018 (the
+[author-hosted PDF](https://www.eecs.tufts.edu/~mdonato/assets/papers/dac2018-envm.pdf),
+SHA-256 `2a47c961…0a5a13`, read on 2026-11-02).
+
+| Item | Status | Where in the paper |
+| --- | --- | --- |
+| Each level's read distribution is Gaussian | **From the paper** | Section 2.2, page 2 (Figure 1 measurements) |
+| A fault is a read into an adjacent level, set by reference thresholds. A programmed level fails into either tail; the initial level into one. | **From the paper** | Section 3.1, page 3, Eqs. 1–2 and Figure 3 |
+| Multi-level jumps are negligible | **From the paper** (and checked here) | Section 3.1, page 3 |
+| 2 to 16 levels per cell are reasonable | **From the paper** | Section 2.2, page 2 |
+| An MLC cell is the same size as an SLC cell (8 F² for CTT), which is the basis of `slc-area` | **From the paper** | Table 1, page 2 (NVSim, 2 MB, 22 nm) |
+| The initial state can be separated from the other levels to protect it, which is the basis of `--level0-safe` | **From the paper** | Sections 3.1 and 4.3.1, pages 3–4 |
+| Value of σ / window | **Not in the paper. Required input; swept 0.005–0.05.** | — |
+| Evenly spaced levels with the same σ, a fixed window for all b, midpoint thresholds | **Assumed** | The paper uses a wider σ for the initial state and a separately tunable gap Δ_init (Sections 2.2 and 3.1) |
+| Per-level error probabilities | **Not in the paper** | No table or text value |
+
+**What the paper gives as numbers.** No σ, read window, threshold, or per-level
+error probability is printed in its text or tables.
+
+- Figure 1 (page 2) plots five measured CTT levels at V_DD = 0.8 V, roughly
+  18–116 µA, with 2σ bands. σ could only be read off the plot, and the
+  normalization of its pdf panel is not stated. **This step does not use it.**
+- The 3- to 16-level distributions came from SPICE Monte Carlo
+  (Section 2.2, Figure 2), and their parameters are not given.
+
+So `sigma_over_window` is a required input. Without it, the script reports the
+sensitivity table below.
+
+### Results: storage and where the budget binds
+
+N comes from the saved encodings, which are recorded with their SHA-256 hashes
+and fingerprints:
+
+- **ResNet-18:** the Step 11a `codebook-bnstats` encoding.
+- **TinyBERT:** the Step 12a monotone `linemb-codebook` (Condition B) and
+  `lin-codebook` (Linear-only) encodings.
+
+Every tensor has k = 16 and an identity index-to-level mapping. Codebook
+retraining keeps the indices, so level use is the same as in the Step 4 and
+Step 10 clustered encodings.
+
+**Minimum budget at which b bits per cell fit** (MB = 2^20 bytes):
+
+| Model | N | Index MB (4 bits) | Codebooks | b = 1 | b = 2 | b = 3 | b = 4 (simulator) | `capacity`, any b |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ResNet-18 | 11,172,032 | 5.327 | 1,344 B | 5.327 | 2.664 | 1.776 | 1.332 | 5.327 |
+| TinyBERT Condition B | 14,333,904 | 6.835 | 1,856 B | 6.835 | 3.417 | 2.278 | 1.709 | 6.835 |
+| TinyBERT Linear-only | 4,650,672 | 2.218 | 1,664 B | 2.218 | 1.109 | 0.739 | 0.554 | 2.218 |
+| Custom 7B | 7,000,000,000 | 3,337.86 | — | 3,337.86 | 1,668.93 | 1,112.62 | 834.47 | 3,337.86 |
+
+The b = 1–4 columns are under the `slc-area` meaning.
+
+**Cells needed:**
+
+| Model | b = 1 | b = 2 | b = 3 | b = 4 |
+| --- | ---: | ---: | ---: | ---: |
+| ResNet-18 | 44,688,128 | 22,344,064 | 14,896,043 | 11,172,032 |
+| TinyBERT Condition B | 57,335,616 | 28,667,808 | 19,111,872 | 14,333,904 |
+
+**Fit at the requested budgets** (`slc-area` / `capacity`, headroom = budget ÷
+used):
+
+| Budget | ResNet-18 | TinyBERT Condition B | TinyBERT Linear-only | Custom 7B |
+| ---: | --- | --- | --- | --- |
+| 8 MB | all b fit; b = 1 has 1.50× headroom | all b fit; b = 1 has 1.17× headroom | all b fit; b = 1 has 3.61× headroom | nothing fits |
+| 32 MB | all fit; b = 1 has 6.0× headroom | all fit; b = 1 has 4.7× headroom | all fit; b = 1 has 14.4× headroom | nothing fits |
+| **128 MB** | **all fit; b = 1 has 24.0×, b = 4 has 96.1× headroom** | **all fit; b = 1 has 18.7×, b = 4 has 74.9× headroom** | all fit; b = 1 has 57.7× headroom | nothing fits (b = 4 has 0.15×) |
+| 512 MB | all fit; b = 1 has 96× headroom | all fit; b = 1 has 75× headroom | all fit | nothing fits (b = 4 has 0.61×) |
+| 4096 MB | all fit | all fit | all fit | all b fit; b = 1 has 1.23× headroom |
+
+- **Our models:** the budget binds below 5.3 MB (ResNet-18) and 6.8 MB (TinyBERT
+  Condition B). Under `slc-area`, 16-level cells become the only option between
+  1.71 and 2.28 MB for TinyBERT Condition B, and between 1.33 and 1.78 MB for
+  ResNet-18. Below those ranges nothing fits.
+- **The paper's reference capacity:** Donato et al. use 2 MB as "representative
+  of on-chip storage capabilities in modern SoCs using SRAM" (Section 2.3). There,
+  TinyBERT Condition B needs b = 4 and ResNet-18 needs b = 3.
+- **Custom 7B:** at 4-bit indices, 16-level cells fit from 834 MB and one-bit
+  cells from 3,338 MB.
+
+### Results: fault probability for the b = 4 (current simulator) configuration
+
+These probabilities do not depend on the budget. They depend only on
+σ / window. Spacing is Δ = window / 15.
+
+| σ / window | Δ / 2σ | Edge level (0 or 15) | Interior level (1–14) | Average, ResNet-18 occupancy | Average, TinyBERT Condition B | Average, Linear-only | Average, uniform | Two-level jumps, ResNet-18 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.005 | 6.67 | 1.3e-11 | 2.6e-11 | 2.6e-11 | 2.6e-11 | 2.6e-11 | 2.5e-11 | 5e-89 |
+| 0.006 | 5.56 | 1.4e-8 | 2.8e-8 | 2.8e-8 | 2.8e-8 | 2.8e-8 | 2.6e-8 | 2e-62 |
+| 0.007 | 4.76 | 9.6e-7 | 1.9e-6 | 1.9e-6 | 1.9e-6 | 1.9e-6 | 1.8e-6 | 3e-46 |
+| 0.008 | 4.17 | 1.6e-5 | 3.1e-5 | 3.1e-5 | 3.1e-5 | 3.1e-5 | 2.9e-5 | 7e-36 |
+| 0.009 | 3.70 | 1.1e-4 | 2.1e-4 | 2.1e-4 | 2.1e-4 | 2.1e-4 | 2.0e-4 | 1e-28 |
+| 0.010 | 3.33 | 4.3e-4 | 8.6e-4 | 8.6e-4 | 8.6e-4 | 8.6e-4 | 8.0e-4 | 2e-23 |
+| 0.0125 | 2.67 | 3.8e-3 | 7.7e-3 | 7.6e-3 | 7.6e-3 | 7.6e-3 | 7.2e-3 | 1e-15 |
+| 0.015 | 2.22 | 1.3e-2 | 2.6e-2 | 2.6e-2 | 2.6e-2 | 2.6e-2 | 2.5e-2 | 3e-11 |
+| 0.020 | 1.67 | 4.8e-2 | 9.6e-2 | 9.5e-2 | 9.5e-2 | 9.5e-2 | 9.0e-2 | 6e-7 |
+| 0.030 | 1.11 | 0.133 | 0.267 | 0.266 | 0.266 | 0.266 | 0.250 | 8e-4 |
+| 0.040 | 0.83 | 0.202 | 0.405 | 0.404 | 0.404 | 0.404 | 0.379 | 1.2e-2 |
+| 0.050 | 0.67 | 0.252 | 0.505 | 0.504 | 0.504 | 0.504 | 0.473 | 4.5e-2 |
+
+- **Interior and edge levels:** every interior level has the same probability,
+  split evenly between up and down. Edge levels have half of it.
+- **Occupancy against uniform:** the three encodings put only 0.1–0.3% of cells
+  on each edge level (level 0: 0.25%, 0.21%, and 0.18%). So the
+  occupancy-weighted average is almost exactly the interior value. It is about
+  6% above the uniform average, which counts two of the 16 levels as edges.
+- **`--level0-safe` changes almost nothing here.** It removes the fault
+  probability of the 0.2% of cells on level 0, lowering the average by under
+  0.3% relative. With our sorted codebooks, level 0 is the most negative
+  cluster, not the most frequent one.
+- **Two-level jumps** are negligible up to σ / window ≈ 0.02. At 0.03–0.05 they
+  reach 0.08–4.5%, and the adjacent-only model stops being accurate.
+
+**σ / window that gives the fault rates already simulated** (b = 4, ResNet-18
+occupancy; uniform in brackets):
+
+| Average cell fault probability | 0.1% | 1% | 5% | 10% | 20% |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| σ / window | 0.0101 [0.0102] | 0.0129 [0.0131] | 0.0170 [0.0173] | 0.0203 [0.0207] | 0.0260 [0.0268] |
+
+Both TinyBERT encodings give the same values to four decimals. The whole range
+our sweeps covered, 0.1–20%, corresponds to σ between about 1.0% and 2.6% of
+the read window. In that band the fault rate changes by two orders of magnitude.
+
+**Fewer levels per cell** (average fault probability, uniform; ResNet-18
+occupancy within 11% of it):
+
+| σ / window | b = 1 | b = 2 | b = 3 | b = 4 |
+| ---: | ---: | ---: | ---: | ---: |
+| 0.01 | < 1e-300 | 1.7e-62 | 8.0e-13 | 8.0e-4 |
+| 0.02 | 3e-138 | 5.9e-17 | 3.1e-4 | 9.0e-2 |
+| 0.03 | 1e-62 | 2.1e-8 | 1.5e-2 | 0.25 |
+| 0.05 | 8e-24 | 6.4e-4 | 0.13 | 0.47 |
+
+**Interpretation, limited to this model:**
+
+- **At 128 MB the budget does not bind for either model.** ResNet-18 and
+  TinyBERT Condition B fit as one-bit cells with 24× and 18.7× headroom under
+  either meaning. With the fewest levels that fit, the predicted fault
+  probability is negligible (below 1e-23 for every σ / window ≤ 0.05).
+- **A nonzero fault rate at 128 MB therefore needs a different premise.** Either
+  16-level cells are chosen anyway (to save area or energy), or most of the
+  128 MB is used for something else.
+- **The b = 4 fault rate is set entirely by σ / window, which we do not have.**
+
+### Decisions needed
+
+1. **The device parameter (from the hardware team).** We need σ / window for
+   16-level cells, or a per-level table of up and down read-error
+   probabilities. The script accepts either (`--sigma-over-window`, or
+   `--level-error-table` with a named source). Also wanted:
+   - whether the read window stays fixed as levels are added;
+   - whether the initial state has a wider σ or a larger gap;
+   - whether thresholds sit at midpoints.
+2. **What the 128 MB means:**
+   - all of it for weights, or a share;
+   - `slc-area` or `capacity`;
+   - whether to fix b = 4 regardless of fit (the only configuration the
+     simulator runs).
+   At 128 MB the budget alone selects one-bit cells.
+3. **Level 0 protection:** Donato et al. put the most frequent cluster on the
+   protected initial level (Table 3). Ours puts the most negative cluster there
+   (0.2% of cells). Protecting the most frequent cluster (13–16% of cells)
+   would need a new cluster-to-level mapping, which is a Part B decision.
+4. **Multi-cell configurations:** b = 1–3 need a simulator, and a choice of
+   bit-to-level code (natural binary, as assumed here, or Gray).
+
+### Commands and files
+
+```zsh
+.venv/bin/python scripts/estimate_fault_rate.py --budget-mb 128 --model resnet18
+.venv/bin/python scripts/estimate_fault_rate.py --budget-mb 128 --model tinybert-linear-emb
+.venv/bin/python scripts/estimate_fault_rate.py --budget-mb 128 --model tinybert-linear
+.venv/bin/python scripts/estimate_fault_rate.py --budget-mb 128 --model custom --num-weights 7000000000
+# options: --sigma-over-window 0.013  --level0-safe  --budget-meaning capacity  --clusters 16
+#          --level-error-table table.json  --run-id <new id>
+```
+
+- **What one command produces:** each command writes
+  `results/fault-rate-estimate-<model>-<budget>mb/`. Its reports cover the
+  given budget plus 8, 32, 128, 512, and 4096 MB, under both meanings.
+  - Without `--sigma-over-window`, the fault tables are a sweep over σ / window
+    from 0.005 to 0.05.
+  - An existing run id is never overwritten.
+- `src/fault_lora/memory/fault_rate_estimate.py`: the model, the occupancy, the
+  report, and the CLI. It is a new file; no hash-recorded file changed.
+- `scripts/estimate_fault_rate.py` and `configs/fault_rate_estimate.json` (the
+  defaults, the budgets, the σ grid, and the encoding paths).
+- `tests/test_fault_rate_estimate.py`: six offline checks.
+  - Q-function values.
+  - Spacing, edges, two-level jumps, and `--level0-safe`.
+  - The explicit-table validation.
+  - Cell counts, fit, and headroom under both meanings, including padding.
+  - Bit-stream occupancy and the σ inversion.
+  - A budget change alters only the budget-dependent part of the report.
+
+| Artifact | Purpose |
+| --- | --- |
+| `…/report.json` | Inputs (CLI, config, resolved settings, source hashes), budget-independent results, then one block per budget. |
+| `…/budgets.csv` | Fit and headroom per budget, meaning, and b. |
+| `…/fault_probabilities.csv` | Per-level down/up/fault/two-level probabilities and occupancy, then the averages. |
+| `…/report.txt` | The terminal tables. |
+
+The full offline suite passes **141 tests**: 135 at `c1e0d57`, plus the six
+Step 13a checks.
+
+### Limitations
+
+- **The device number is missing.** All fault probabilities are conditional on
+  σ / window.
+- **Simplified device model:** one σ for all levels, evenly spaced levels, and
+  midpoint thresholds. It is not calibrated against any measured device.
+- **Area:** `slc-area` treats an MLC cell as the same area as an SLC cell and
+  ignores sense-amplifier and periphery area. In Donato et al. Table 1, the
+  2 MB CTT-MLC array is 0.38 mm² against 0.81 mm² for CTT-SLC, not 4× smaller.
+- **Encoding storage:** codebooks, mappings, biases, and normalization state are
+  excluded from the budget and assumed reliable.
+
 ## Next steps
 
 9. **Remaining ResNet-18 comparisons:** Step 9b covered matched clean and
@@ -3723,6 +3994,10 @@ Step 12c checks.
     LoRA on that baseline with Linear and Linear + embedding adapters. Still
     open: other initializations or learning rates for embedding adapters, and
     why their training starts with a higher loss.
+11. **Hardware-derived fault rates:** Step 13a turned an on-chip budget into a
+    cell fault probability, conditional on σ / window, which the hardware team
+    still has to supply. A level-dependent fault simulator and reruns at the
+    derived rate (Part B) have not been started.
 
 Training, validation, and test data will remain separate. Future experiments
 must document assumptions and save configurations, seeds, fault patterns,

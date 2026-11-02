@@ -1,0 +1,41 @@
+{
+  "model": "resnet18",
+  "budget_mb": 128,
+  "budget_meaning": "slc-area",
+  "clusters": 16,
+  "level0_safe": false,
+  "compare_budgets_mb": [
+    8,
+    32,
+    128,
+    512,
+    4096
+  ],
+  "sigma_grid": [
+    0.005,
+    0.006,
+    0.007,
+    0.008,
+    0.009,
+    0.01,
+    0.0125,
+    0.015,
+    0.02,
+    0.03,
+    0.04,
+    0.05
+  ],
+  "encodings": {
+    "resnet18": "checkpoints/resnet18-cifar10-codebook-finetune-k16-seed42/codebook-bnstats/encoding.pt",
+    "tinybert-linear-emb": "checkpoints/tinybert-sst2-codebook-finetune-monotone-k16-seed42/linemb-codebook/encoding.pt",
+    "tinybert-linear": "checkpoints/tinybert-sst2-codebook-finetune-monotone-k16-seed42/lin-codebook/encoding.pt"
+  },
+  "results_root": "results",
+  "target_fault_probabilities": [
+    0.001,
+    0.01,
+    0.05,
+    0.1,
+    0.2
+  ]
+}
