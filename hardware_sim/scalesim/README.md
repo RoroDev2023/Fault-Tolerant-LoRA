@@ -72,3 +72,49 @@ memory, what bandwidth is used, and the exact reason (if any) faults add cycles.
 Only then modify SCALE-Sim's memory service paths and test new timing behavior.
 
 
+
+
+## Before comparing USER-mode performance to another branch
+
+`run_gemm.py` is a **GEMM-only** prototype. The labels `clustered+lora` and
+`clustered+faults+lora` **do not** represent compressed-weight or fault timing.
+Use `--baseline-only` in `run_gemm.py` to run only the original
+workload and save utilization/mapping reports.
+
+**Do not compare unlike configurations.** Meera's `resnet-scalesim-configs`
+results used **output-stationary (OS)** and **128 KiB** each of IFMAP/filter/OFMAP
+SRAM, with the SCALE-Sim revision listed in her
+`hardware_sim/scalesim/SCALESIM_V3_REVISION` and NumPy 1.26.4.
+This branch's checked-in config instead uses **weight-stationary (WS)** and
+**64 KiB** SRAM. Those changes alone invalidate a direct cycle-count comparison.
+
+Generate explicitly matched configs using `make_fixed_bw_config.py`:
+
+```bash
+python hardware_sim/scalesim/make_fixed_bw_config.py \
+ --base ../scale-sim-v3/configs/scale.cfg \
+ --out results/validation/64x64_os_bw10.cfg \
+ --array-height 64 --array-width 64 --dataflow os \
+ --ifmap-sram-kb 128 --filter-sram-kb 128 --ofmap-sram-kb 128 \
+ --bandwidth 10
+```
+
+Regenerate the workload CSVs after the exporter change and verify them:
+
+```bash
+python hardware_sim/scalesim/extract_resnet_gemm.py
+python hardware_sim/scalesim/validate_workloads.py
+```
+
+For results produced with the earlier per-layer Slurm scripts, verify architecture
+settings independently before aggregation:
+
+```bash
+python hardware_sim/scalesim/audit_layer_results.py \
+ --root results/hpc/resnet18_layers_bw10/64x64 \
+ --size 64 --bandwidth 10 --dataflow ws --sram-kb 64
+```
+
+This audit does not establish correctness of SCALE-Sim's internal DRAM stalls.
+Keep simulator patches separate and validate against an unmodified checkout
+using identical input data and settings before trusting revised cycle counts.

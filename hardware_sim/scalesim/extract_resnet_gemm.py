@@ -104,8 +104,8 @@ def export(outdir: Path, image_size: int = 96, rank: int = 4, alpha: float = 4.0
     def write_gemm(filename, items):
         with (outdir / filename).open("w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Layer Name", " M", " N", " K", ""])
-            writer.writerows([[name, dims["M"], dims["N"], dims["K"], ""] for name, dims in items])
+            writer.writerow(["Layer Name", " M", " N", " K", " Sparsity", ""])
+            writer.writerows([[name, dims["M"], dims["N"], dims["K"], "1:1", ""] for name, dims in items])
 
     write_gemm("original_gemm.csv", [(name, observed[name]["base"]) for name in base_order])
     write_gemm("lora_gemm.csv", [

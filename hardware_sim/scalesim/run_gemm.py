@@ -43,11 +43,64 @@ def main():
     p.add_argument('--config',default='../scale-sim-v3/configs/scale.cfg')
     p.add_argument('--layout',default='../scale-sim-v3/layouts/conv_nets/test.csv')
     p.add_argument('--out',default='results/hardware_sim/scalesim')
+    p.add_argument('--baseline-only', action='store_true',
+                   help='run ONLY the 21 original GEMMs and save cycle/utilization metrics')
     args=p.parse_args()
     w=Path(args.workloads);out=Path(args.out)
     original=execute(Path(args.config),w/'original_gemm.csv',out/'base',Path(args.layout))
+    n_base,n_base_pref=tally(original)
+    if len(original) != 21:
+        raise ValueError(f'Expected 21 original ResNet-18 GEMMs, found {len(original)}')
+    # Read all metric names irrespective of leading whitespace in SCALE-Sim reports.
+    def metric(row, key):
+        matches = [value for column, value in row.items()
+                   if column is not None and column.strip() == key]
+        if len(matches) != 1:
+            raise ValueError(f'Expected one report column {key!r}, found {len(matches)}')
+        return float(matches[0])
+    if n_base <= 0:
+        raise ValueError('Invalid baseline cycle total')
+    baseline_layers = []
+    for index, row in enumerate(original):
+        baseline_layers.append({
+            'layer_index': index,
+            'cycles': int(row['Total Cycles']),
+            'stall_cycles': int(metric(row, 'Stall Cycles')),
+            'overall_utilization_percent': metric(row, 'Overall Util %'),
+            'compute_utilization_percent': metric(row, 'Compute Util %'),
+            'mapping_efficiency_percent': metric(row, 'Mapping Efficiency %'),
+        })
+    if any(r['stall_cycles'] < 0 or r['stall_cycles'] > r['cycles'] for r in baseline_layers):
+        raise ValueError('Invalid stall counts in SCALE-Sim reports')
+    summary = {
+        'scope': 'original ResNet-18 GEMM-only; serial layer summation, not physical inference latency',
+        'total_cycles': n_base,
+        'prefetch_inclusive_serial_cycles': n_base_pref,
+        'cycle_weighted_overall_utilization_percent':
+            sum(r['cycles'] * r['overall_utilization_percent'] for r in baseline_layers)/n_base,
+        'cycle_weighted_compute_utilization_percent':
+            sum(r['cycles'] * r['compute_utilization_percent'] for r in baseline_layers)/n_base,
+        'cycle_weighted_mapping_efficiency_percent':
+            sum(r['cycles'] * r['mapping_efficiency_percent'] for r in baseline_layers)/n_base,
+        'total_layer_stall_cycles': sum(r['stall_cycles'] for r in baseline_layers),
+        'layer_count': len(baseline_layers),
+        'config_path': str(Path(args.config).resolve()),
+        'workload_path': str((w/'original_gemm.csv').resolve()),
+        'note': 'A high stall ratio requires memory-model validation; clustering/fault effects are not modeled',
+    }
+    out.mkdir(parents=True, exist_ok=True)
+    (out/'baseline_metrics.json').write_text(json.dumps(summary,indent=2)+'\n')
+    with (out/'baseline_layer_metrics.csv').open('w',newline='') as f:
+        writer=csv.DictWriter(f,fieldnames=list(baseline_layers[0]))
+        writer.writeheader();writer.writerows(baseline_layers)
+    if args.baseline_only:
+        print(json.dumps(summary,indent=2))
+        print('Saved',out/'baseline_metrics.json',out/'baseline_layer_metrics.csv')
+        return
     lora=execute(Path(args.config),w/'lora_gemm.csv',out/'adapters',Path(args.layout))
-    n_base,n_base_pref=tally(original);n_lora,n_lora_pref=tally(lora)
+    if len(lora) != 42:
+        raise ValueError(f'Expected 42 LoRA GEMMs, found {len(lora)}')
+    n_lora,n_lora_pref=tally(lora)
     cases=[('original',n_base,n_base_pref),
            ('clustered+lora',n_base+n_lora,n_base_pref+n_lora_pref),
            ('clustered+faults+lora',n_base+n_lora,n_base_pref+n_lora_pref)]
