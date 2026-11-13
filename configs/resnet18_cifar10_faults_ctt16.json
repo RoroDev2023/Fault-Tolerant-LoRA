@@ -1,0 +1,16 @@
+{
+  "run_id": "resnet18-cifar10-faults-ctt-maxnvm2019-seed42",
+  "fault_model": "device",
+  "device": "ctt_maxnvm2019",
+  "read_noise_ua": 0.0,
+  "l0_gap_ua": null,
+  "sigma_prog_ua": null,
+  "sigma_mode": "flat",
+  "seed": 42,
+  "cpu_threads": 4,
+  "source_encoding": "checkpoints/resnet18-cifar10-clustered-k16-seed42/encoding.pt",
+  "source_clustered_dense": "checkpoints/resnet18-cifar10-clustered-k16-seed42/clustered_dense.pt",
+  "source_results": "results/resnet18-cifar10-clustered-k16-seed42",
+  "checkpoint_root": "checkpoints",
+  "results_root": "results"
+}

@@ -455,8 +455,9 @@ that fingerprint and the sparse transitions, then reconstructs an independent
 dense state from the uncorrupted encoding. Replaying the same pattern does
 not accumulate faults or modify its inputs. Static faults mean these saved
 substitutions stay fixed throughout a later experiment; they are not resampled
-on each inference call. The simulator does not currently model level-dependent
-hardware error rates, multiple cells per index, or faults in reliable metadata.
+on each inference call. The uniform simulator does not model level-dependent
+hardware error rates (see the optional device model below), multiple cells per
+index, or faults in reliable metadata.
 
 Generate from existing local artifacts, using CPU only:
 
@@ -497,6 +498,77 @@ check establishes that the saved model runs; it does not quantify damage.
 Step 6 audited the complete ResNet artifacts; Step 7 measured fault
 loss against the **83.29% clustered zero-fault test baseline**, keeping it
 separate from the original clean model's 92.28% accuracy and clustering loss.
+
+### Optional: level-dependent device fault model
+
+In a multi-level cell, the chance of a misread depends on the level a cell
+stores. Cells written to one level read back a spread of signals (a Gaussian
+with mean μ and spread σ for CTT). The read circuit puts a threshold between
+neighboring levels, and a cell whose signal lands past one is read as the
+neighbor. `src/fault_lora/memory/device_models.py` turns per-level
+distributions into a `LevelFaultModel`: for each physical level, the
+probability of reading one level down (`p_down`) or up (`p_up`). Physical level
+i is the technology's level Li; for CTT, L0 is the unprogrammed state, which
+has the most current and the widest spread.
+
+| Device | Source | Levels |
+| --- | --- | --- |
+| `ctt_maxnvm2019` | 8-level 16 nm CTT test chip, 128 cells per level, read current at 0.8 V; read from the vector data of Fig. 2b in Pentecost, Donato, Reagen et al., MaxNVM (MICRO 2019) | 8 as measured; any other count rebuilt in the measured current window |
+| `ctt_dac2018` | 5-level chip from Fig. 1 of the DAC 2018 reference | 5 as measured; others rebuilt |
+| `rram_msxfi`, `fefet_msxfi` | `mem_data` distribution files from MemSysExplorer's msxFI fault injector, with its threshold rules | 2, 4, 8 only |
+
+To rebuild a CTT cell with another level count, L0 stays as measured, L1 sits
+the measured L0–L1 gap below it (or `l0_gap_ua`), and the remaining programmed
+levels are spaced evenly down to the chip's lowest measured level. Programmed
+levels share one σ: the mean measured programmed σ above 10 µA (1.29 µA for the
+MaxNVM chip), or `sigma_prog_ua`. `sigma_mode: "interpolated"` instead
+interpolates σ by current. Thresholds sit an equal number of σ from both
+neighbors. The chip data do not include the read circuit (current-to-voltage
+converter and sense amplifier), and it is not known whether the msxFI files do.
+`read_noise_ua` adds read-circuit spread in quadrature to every CTT level.
+
+Average misread probability with all levels used equally:
+
+| Model | 16 levels | 8 levels |
+| --- | ---: | ---: |
+| CTT, MaxNVM chip, cell only | 1.18% | 3.8 × 10⁻⁸ (measured levels) |
+| CTT, MaxNVM chip, L0 gap 30 µA | 0.21% | — |
+| CTT, MaxNVM chip, read noise 0.92 / 1.29 / 1.76 µA | 3.9% / 7.0% / 12.5% | — |
+| CTT, DAC chip, cell only | 6.46% | — |
+| RRAM (msxFI) | not available | 0.38% |
+| FeFET (msxFI) | not available | 8.1% (1.1% at 4 levels) |
+
+The three read-noise values put the measured 8-level chip's worst level at
+10⁻⁵, 10⁻⁴ and 10⁻³, the range MaxNVM reports for 3-bit cells after its read
+circuit. With the cell spread alone the chip's worst 8-level rate is about
+1.4 × 10⁻⁷. Print any model's per-level table with:
+
+```sh
+.venv/bin/python scripts/report_device_fault_rates.py --device ctt_maxnvm2019 --levels 16 --read-noise-ua 0.92
+```
+
+`generate_device_fault_pattern(encoding, model, seed=...)` draws one float64
+uniform per cell and moves it down if the draw is below `p_down[level]`, up if
+it is below `p_down[level] + p_up[level]`, and otherwise leaves it. It saves the
+same sparse transitions as the uniform simulator under the kind
+`static_adjacent_physical_levels_device_v1`, with the full model in the
+pattern. `summarize_fault_pattern` and `apply_fault_pattern` accept both kinds.
+For device patterns, the summary's expected count weights each level's fault
+probability by how many cells store it, and every saved transition must have
+nonzero probability under the saved model. Uniform-pattern summaries are
+unchanged.
+
+Step 5 runs the device model when the configuration sets `"fault_model":
+"device"`; see `configs/resnet18_cifar10_faults_ctt16.json`. Every clustered
+tensor with K > 1 must store the model's level count. The Step 6 audit and the
+Step 7 sweep still cover uniform patterns only.
+
+Which cluster occupies L0 matters, because L0 almost never faults.
+`with_level_order(record, order)` and `most_common_at_level0(record)` in
+`clustering.py` build a mapping that puts the most used index at physical
+level 0 and keeps the rest in sorted order. Decoding without faults is
+unchanged. The mapping is part of the encoding fingerprint, so using it in the
+pipeline means saving a remapped Step 4 encoding; that is not wired in yet.
 
 ## Step 6: Fault-injection correctness checks
 

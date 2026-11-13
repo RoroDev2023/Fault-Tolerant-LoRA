@@ -1,7 +1,15 @@
 """Saved adjacent-physical-level faults, independent of model/data evaluation.
 
-This uniform, one-cell-per-index model is an experimental simplification, not
-a calibrated eNVM model. Applying a pattern always starts from its baseline.
+Two pattern kinds share one sparse-transition format:
+
+* ``static_adjacent_physical_levels_v1``: every cell faults with one
+  probability; interior directions are equiprobable. An experimental
+  simplification, not a calibrated eNVM model.
+* ``static_adjacent_physical_levels_device_v1``: each cell's chance of being
+  read one level down or up depends on the level it stores, taken from a
+  ``LevelFaultModel`` (see ``fault_lora.memory.device_models``).
+
+Applying a pattern always starts from its baseline.
 """
 
 import hashlib
@@ -12,9 +20,11 @@ from numbers import Real
 import torch
 
 from fault_lora.memory.clustering import decode_layer, decode_state, physical_levels, validate_record
+from fault_lora.memory.device_models import LevelFaultModel
 
 
 KIND = "static_adjacent_physical_levels_v1"
+DEVICE_KIND = "static_adjacent_physical_levels_device_v1"
 
 
 def validate_parameters(probability, seed):
@@ -60,9 +70,7 @@ def generate_fault_pattern(encoding, fault_probability, *, seed=42, tensor_names
     validate_parameters(fault_probability, seed)
     fingerprint = encoding_fingerprint(encoding)
     records = encoding["clustered_tensors"]
-    names = sorted(records if tensor_names is None else tensor_names)
-    if not names or len(names) != len(set(names)) or not set(names) <= set(records):
-        raise ValueError("Select a nonempty, unique subset of clustered tensor names")
+    names = _select_names(records, tensor_names)
     generator = torch.Generator(device="cpu").manual_seed(seed)
     tensors = {}
     for name in names:
@@ -93,11 +101,74 @@ def generate_fault_pattern(encoding, fault_probability, *, seed=42, tensor_names
     }
 
 
+def _select_names(records, tensor_names):
+    names = sorted(records if tensor_names is None else tensor_names)
+    if not names or len(names) != len(set(names)) or not set(names) <= set(records):
+        raise ValueError("Select a nonempty, unique subset of clustered tensor names")
+    return names
+
+
+def generate_device_fault_pattern(encoding, model, *, seed=42, tensor_names=None):
+    """Sample level-dependent static faults and persist exact sparse transitions.
+
+    Each cell draws one float64 uniform u: it moves down one level if
+    u < p_down[level], up one level if p_down[level] <= u < p_down[level] + p_up[level],
+    and otherwise keeps its level. Every selected tensor with K > 1 must have
+    K == model.num_levels; K=1 tensors are excluded as in the uniform model.
+    """
+    if not isinstance(model, LevelFaultModel):
+        raise TypeError("model must be a LevelFaultModel")
+    model.validate()
+    validate_parameters(0.0, seed)
+    fingerprint = encoding_fingerprint(encoding)
+    records = encoding["clustered_tensors"]
+    names = _select_names(records, tensor_names)
+    p_down = torch.tensor(model.p_down, dtype=torch.float64)
+    p_any = p_down + torch.tensor(model.p_up, dtype=torch.float64)
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    tensors = {}
+    for name in names:
+        record = records[name]
+        k = record["codebook"].numel()
+        if k > 1 and k != model.num_levels:
+            raise ValueError(f"{name} stores {k} levels per cell but the fault model has {model.num_levels}")
+        original = physical_levels(record).reshape(-1)
+        positions = torch.empty(0, dtype=torch.int64)
+        steps = torch.empty(0, dtype=torch.int16)
+        if k > 1:
+            u = torch.rand(original.numel(), generator=generator, dtype=torch.float64)
+            levels = original.long()
+            down = u < p_down[levels]
+            up = ~down & (u < p_any[levels])
+            positions = (down | up).nonzero().flatten()
+            steps = torch.where(up[positions], 1, -1).to(torch.int16)
+        before = original[positions].clone()
+        after = (before.to(torch.int16) + steps).to(torch.uint8)
+        tensors[name] = {"shape": list(record["shape"]), "num_levels": k,
+                         "positions": positions, "before_levels": before, "after_levels": after}
+    return {
+        "format_version": 1, "kind": DEVICE_KIND, "source_fingerprint": fingerprint,
+        "fault_model": model.to_dict(), "seed": seed,
+        "tensor_order": names, "tensors": tensors,
+        "sampling": "CPU torch.Generator; sorted tensor names; one float64 rand per cell compared with the stored level's p_down and p_down + p_up",
+        "torch_version": str(torch.__version__),
+        "cell_representation": "one cell per saved index; physical states 0 through K-1; saved inverse mappings used for decoding",
+        "boundary_behavior": "level 0 cannot move down and level K-1 cannot move up (zero probability in the model); K=1 tensors excluded",
+        "static": True,
+        "assumptions": "level-dependent cell spread from the fault model; reliable codebooks, mappings, biases, and normalization state",
+    }
+
+
 def summarize_fault_pattern(encoding, pattern):
     """Validate exact transitions and compute counts from the saved pattern."""
-    if pattern["format_version"] != 1 or pattern["kind"] != KIND:
+    if pattern["format_version"] != 1 or pattern["kind"] not in (KIND, DEVICE_KIND):
         raise ValueError("Unsupported fault pattern format")
-    validate_parameters(pattern["fault_probability"], pattern["seed"])
+    model = None
+    if pattern["kind"] == KIND:
+        validate_parameters(pattern["fault_probability"], pattern["seed"])
+    else:
+        validate_parameters(0.0, pattern["seed"])
+        model = LevelFaultModel.from_dict(pattern["fault_model"])
     if pattern["source_fingerprint"] != encoding_fingerprint(encoding):
         raise ValueError("Pattern belongs to a different uncorrupted encoding")
     names = pattern["tensor_order"]
@@ -124,6 +195,15 @@ def summarize_fault_pattern(encoding, pattern):
                 raise ValueError(f"Invalid adjacent-level transition: {name}")
             if not torch.equal(original[positions], before):
                 raise ValueError(f"Stored original levels differ from baseline: {name}")
+        if model is not None and k > 1:
+            if k != model.num_levels:
+                raise ValueError(f"Pattern fault model level count differs from storage: {name}")
+            if positions.numel():
+                moved_up = after > before
+                allowed = torch.where(moved_up, torch.tensor(model.p_up, dtype=torch.float64)[before.long()],
+                                      torch.tensor(model.p_down, dtype=torch.float64)[before.long()])
+                if not torch.all(allowed > 0):
+                    raise ValueError(f"Transition has zero probability under the saved fault model: {name}")
         old_weights = record["codebook"][record["level_to_index"][before.long()]]
         new_weights = record["codebook"][record["level_to_index"][after.long()]]
         layer = {
@@ -140,14 +220,25 @@ def summarize_fault_pattern(encoding, pattern):
             "destination_level_histogram": torch.bincount(after.long(), minlength=k).tolist(),
         }
         layer["realized_fault_rate"] = positions.numel() / layer["eligible_cells"] if layer["eligible_cells"] else 0.0
+        if model is not None:   # uniform summaries stay identical to earlier saved counts
+            stored = torch.bincount(original.long(), minlength=k).double()
+            layer["expected_corrupted_cells"] = float((stored * torch.tensor(model.fault_probability, dtype=torch.float64)).sum()) if k > 1 else 0.0
         layers[name] = layer
         for key in totals:
             totals[key] += layer[key]
-    return {**totals, "requested_fault_probability": pattern["fault_probability"],
-            "expected_corrupted_cells": totals["eligible_cells"] * pattern["fault_probability"],
-            "realized_fault_rate": totals["actual_corrupted_cells"] / totals["eligible_cells"] if totals["eligible_cells"] else 0.0,
-            "rate_denominator": "selected clustered tensors with at least two physical levels; one scalar index per cell",
-            "layers": layers}
+    if model is None:
+        expected = totals["eligible_cells"] * pattern["fault_probability"]
+    else:
+        expected = sum(layer["expected_corrupted_cells"] for layer in layers.values())
+    summary = {**totals,
+               "requested_fault_probability": pattern["fault_probability"] if model is None else (expected / totals["eligible_cells"] if totals["eligible_cells"] else 0.0),
+               "expected_corrupted_cells": expected,
+               "realized_fault_rate": totals["actual_corrupted_cells"] / totals["eligible_cells"] if totals["eligible_cells"] else 0.0,
+               "rate_denominator": "selected clustered tensors with at least two physical levels; one scalar index per cell",
+               "layers": layers}
+    if model is not None:
+        summary["fault_model"] = model.name
+    return summary
 
 
 def apply_fault_pattern(encoding, pattern):

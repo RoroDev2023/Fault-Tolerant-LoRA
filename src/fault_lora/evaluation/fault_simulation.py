@@ -2,6 +2,7 @@
 
 import argparse
 from dataclasses import asdict, dataclass
+import math
 from datetime import datetime, timezone
 import importlib.metadata
 import json
@@ -14,7 +15,8 @@ import torch
 
 from fault_lora.evaluation.clustered_baseline import save_torch, sha256_file, write_json
 from fault_lora.memory.clustering import decode_state, eligible_weight_names
-from fault_lora.memory.faults import apply_fault_pattern, generate_fault_pattern, summarize_fault_pattern, validate_parameters
+from fault_lora.memory.device_models import DEVICES, device_model
+from fault_lora.memory.faults import apply_fault_pattern, generate_device_fault_pattern, generate_fault_pattern, summarize_fault_pattern, validate_parameters
 from fault_lora.models.resnet import build_resnet18, load_clean_checkpoint
 
 
@@ -29,9 +31,29 @@ class FaultConfig:
     source_results: str = "results/resnet18-cifar10-clustered-k16-seed42"
     checkpoint_root: str = "checkpoints"
     results_root: str = "results"
+    # "uniform": every cell faults with fault_probability. "device": each cell's
+    # fault chance depends on its stored level (fault_lora.memory.device_models);
+    # fault_probability is then unused.
+    fault_model: str = "uniform"
+    device: str = "ctt_maxnvm2019"
+    read_noise_ua: float = 0.0
+    l0_gap_ua: float = None
+    sigma_prog_ua: float = None
+    sigma_mode: str = "flat"
 
     def validate(self):
-        validate_parameters(self.fault_probability, self.seed)
+        if self.fault_model == "uniform":
+            validate_parameters(self.fault_probability, self.seed)
+        elif self.fault_model == "device":
+            validate_parameters(0.0, self.seed)
+            if self.device not in DEVICES:
+                raise ValueError(f"device must be one of {DEVICES}")
+            for name in ("read_noise_ua", "l0_gap_ua", "sigma_prog_ua"):
+                value = getattr(self, name)
+                if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+                    raise ValueError(f"{name} must be a finite number")
+        else:
+            raise ValueError("fault_model must be 'uniform' or 'device'")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.run_id):
             raise ValueError("run_id must be a simple directory name")
         if isinstance(self.cpu_threads, bool) or not isinstance(self.cpu_threads, int) or self.cpu_threads < 1:
@@ -68,6 +90,17 @@ def validate_source(root, config):
     return encoding, paths, hashes
 
 
+def make_pattern(encoding, config):
+    if config.fault_model == "uniform":
+        return generate_fault_pattern(encoding, config.fault_probability, seed=config.seed)
+    level_counts = {record["codebook"].numel() for record in encoding["clustered_tensors"].values()} - {1}
+    if len(level_counts) != 1:
+        raise ValueError(f"A device fault model needs one level count across clustered tensors, found {sorted(level_counts)}")
+    model = device_model(config.device, level_counts.pop(), read_noise_ua=config.read_noise_ua, l0_gap_ua=config.l0_gap_ua,
+                         sigma_prog_ua=config.sigma_prog_ua, sigma_mode=config.sigma_mode)
+    return generate_device_fault_pattern(encoding, model, seed=config.seed)
+
+
 def run_fault_simulation(config, project_root):
     config.validate()
     root = Path(project_root)
@@ -88,7 +121,7 @@ def run_fault_simulation(config, project_root):
         environment = {"python": platform.python_version(), "platform": platform.platform(), "device": "cpu", "cpu_threads": config.cpu_threads,
                        "packages": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "numpy")}}
         write_json(results_dir / "environment.json", environment)
-        pattern = generate_fault_pattern(encoding, config.fault_probability, seed=config.seed)
+        pattern = make_pattern(encoding, config)
         pattern_path = checkpoint_dir / "pattern.pt"
         save_torch(pattern_path, pattern)
         saved_pattern = torch.load(pattern_path, map_location="cpu", weights_only=True)

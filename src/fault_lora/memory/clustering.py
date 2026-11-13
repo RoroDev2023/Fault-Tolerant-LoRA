@@ -143,6 +143,35 @@ def decode_state(encoding):
     return state
 
 
+def with_level_order(record, level_order):
+    """Return a copy of ``record`` whose physical level l stores index ``level_order[l]``.
+
+    Codebook and indices are unchanged, so decoding without faults is identical;
+    only which indices are physical neighbours (and which sits at level 0) changes.
+    """
+    validate_record(record)
+    order = torch.as_tensor(list(level_order), dtype=torch.int64)
+    if order.shape != record["index_to_level"].shape or not torch.equal(order.sort().values, torch.arange(order.numel())):
+        raise ValueError("level_order must be a permutation of all codebook indices")
+    remapped = dict(record)
+    remapped["level_to_index"] = order.clone()
+    remapped["index_to_level"] = torch.argsort(order)
+    validate_record(remapped)
+    return remapped
+
+
+def most_common_at_level0(record):
+    """Level order with the most used index at physical level 0 and the rest in their current level order.
+
+    Level 0 is the unprogrammed CTT state, which almost never faults, so this
+    protects the largest group of weights (usually the cluster nearest zero).
+    """
+    validate_record(record)
+    counts = torch.bincount(record["indices"].reshape(-1).long(), minlength=record["codebook"].numel())
+    first = int(torch.argmax(counts))
+    return [first] + [int(i) for i in record["level_to_index"].tolist() if int(i) != first]
+
+
 def tensor_bytes(tensor):
     return tensor.numel() * tensor.element_size()
 

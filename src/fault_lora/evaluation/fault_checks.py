@@ -112,6 +112,7 @@ def run_fault_checks(config, project_root):
     require(json.loads((fault_results / "status.json").read_text())["status"] == "complete", "Source fault run is incomplete")
     fault_config = FaultConfig(**json.loads((fault_results / "config.json").read_text()))
     fault_config.validate()
+    require(fault_config.fault_model == "uniform", "The Step 6 audit covers uniform fault patterns only")
     encoding, source_paths, source_hashes = validate_source(root, fault_config)
     manifest = json.loads((fault_results / "manifest.json").read_text())
     source_paths.update({"pattern": root / manifest["fault_pattern"], "faulty_dense": root / manifest["faulty_dense"]})
