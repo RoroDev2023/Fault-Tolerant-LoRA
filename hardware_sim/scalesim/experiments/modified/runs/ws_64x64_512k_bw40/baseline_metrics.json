@@ -1,0 +1,13 @@
+{
+  "scope": "original ResNet-18 GEMM-only; serial layer summation, not physical inference latency",
+  "total_cycles": 621704,
+  "prefetch_inclusive_serial_cycles": 673837,
+  "cycle_weighted_overall_utilization_percent": 13.08102408863382,
+  "cycle_weighted_compute_utilization_percent": 12.573503034387727,
+  "cycle_weighted_mapping_efficiency_percent": 99.38942255880612,
+  "total_layer_stall_cycles": 19123,
+  "layer_count": 21,
+  "config_path": "/Users/xoaryaa/Downloads/LoRA/reseach-tools/scale-sim-v3-debug/results/resnet18_512k_bw40/configs/ws.cfg",
+  "workload_path": "/Users/xoaryaa/Downloads/LoRA/reseach-tools/scale-sim-v3-debug/results/resnet18_original_ws64_legacy_fp32/workloads/original_gemm.csv",
+  "note": "A high stall ratio requires memory-model validation; clustering/fault effects are not modeled"
+}
