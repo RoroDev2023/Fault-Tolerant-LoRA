@@ -1,0 +1,4 @@
+dataflow,pe_array,sram_kib_each,bandwidth_words_per_cycle,total_cycles,stall_cycles,nonstall_cycles,stall_percentage
+ws,64x64,64,160,5917558,5314977,602581,89.82
+ws,64x64,128,160,3426191,2823610,602581,82.41
+ws,128x128,128,160,3113170,2816073,297097,90.46
