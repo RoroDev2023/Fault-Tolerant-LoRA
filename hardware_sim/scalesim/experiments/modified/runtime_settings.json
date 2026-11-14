@@ -1,0 +1,21 @@
+{
+  "simulator": "modified SCALE-Sim v3",
+  "scope": "21-layer ResNet-18 GEMM-only experiments",
+  "source_defaults": {
+    "SCALESIM_EXACT_ACTIVE_WINDOW": "1",
+    "SCALESIM_WS_IFMAP_PREFETCH": "legacy",
+    "SCALESIM_WORD_SIZE_BYTES": "1"
+  },
+  "intended_reproduction_environment": {
+    "SCALESIM_EXACT_ACTIVE_WINDOW": "1",
+    "SCALESIM_WS_IFMAP_PREFETCH": "legacy",
+    "SCALESIM_WORD_SIZE_BYTES": "4"
+  },
+  "historical_environment_verified": false,
+  "notes": [
+    "Runtime environment variables were not captured in saved metrics JSON.",
+    "The intended reproduction configuration uses FP32 capacity accounting.",
+    "Offline first-use prefetch is not included in these seven full-network runs.",
+    "Historical run environment should be confirmed from logs or reproduced."
+  ]
+}
