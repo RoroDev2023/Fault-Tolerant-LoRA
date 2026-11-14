@@ -1,0 +1,3 @@
+source=https://github.com/scalesim-project/scale-sim-v3.git
+base=f79d7bc39a80a21fc35bc667967b76a15b311f49
+head=9e097d4b2240524efb864f372d71ab291282c53c

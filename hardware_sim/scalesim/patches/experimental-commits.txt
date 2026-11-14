@@ -1,0 +1,8 @@
+87914cf fix: use numpy reduction for ofmap cycle accounting
+d04120d fix: support nested simulation output directories
+7b2285b chore: ignore generated simulation results
+ca599bf experiment: checkpoint read-buffer residency and prefetch modeling
+22e6fba experiment: make exact active-window tracking selectable
+8f3876d perf: defer read-buffer trace concatenation
+0019e43 test: cover deferred read-buffer trace accumulation
+9e097d4 fix: handle deferred read traces in energy analysis

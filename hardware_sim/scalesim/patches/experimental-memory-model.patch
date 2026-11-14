@@ -1,0 +1,581 @@
+diff --git a/.gitignore b/.gitignore
+index 8ec43b6..73f6079 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -27,3 +27,4 @@ test*
+ configs_test
+ benchmark_results
+ .venv/
++/results/
+diff --git a/scalesim/energy/accelergy_plugin.py b/scalesim/energy/accelergy_plugin.py
+index c1a4e4c..aab5c8d 100644
+--- a/scalesim/energy/accelergy_plugin.py
++++ b/scalesim/energy/accelergy_plugin.py
+@@ -32,9 +32,9 @@ class energymodel:
+         self.DRAM_row_size = DRAM_row_size
+ 
+         self.ifmap_sram_repeat = self.sram_repeat_check(bank_size=self.SRAM_bank_size, memory = memory_system.ifmap_trace_matrix, row_size=self.SRAM_row_size)
+-        self.ifmap_dram_repeat = self.dram_repeat_check(bank_size=self.DRAM_bank_size, memory = memory_system.ifmap_buf, row_size=self.DRAM_row_size)
++        self.ifmap_dram_repeat = self.dram_repeat_check(bank_size=self.DRAM_bank_size, memory = memory_system.ifmap_buf, row_size=self.DRAM_row_size, materialize=True)
+         self.filter_sram_repeat = self.sram_repeat_check(bank_size=self.SRAM_bank_size, memory = memory_system.filter_trace_matrix, row_size=self.SRAM_row_size)
+-        self.filter_dram_repeat = self.dram_repeat_check(bank_size=self.DRAM_bank_size, memory = memory_system.filter_buf, row_size=self.DRAM_row_size)
++        self.filter_dram_repeat = self.dram_repeat_check(bank_size=self.DRAM_bank_size, memory = memory_system.filter_buf, row_size=self.DRAM_row_size, materialize=True)
+         self.ofmap_sram_repeat = self.sram_repeat_check(bank_size=self.SRAM_bank_size, memory = memory_system.ifmap_trace_matrix, row_size=self.SRAM_row_size)
+         self.ofmap_dram_repeat = self.dram_repeat_check(bank_size=self.DRAM_bank_size, memory = memory_system.ofmap_buf, row_size=self.DRAM_row_size)
+         
+@@ -81,19 +81,28 @@ class energymodel:
+ 
+ 
+     # Function for DRAM
+-    def dram_repeat_check(self, bank_size, memory, row_size = 1):
++    def dram_repeat_check(self, bank_size, memory, row_size=1, materialize=False):
+         if not memory.trace_valid:
+             print('No trace has been generated yet')
+             return
+ 
++        if materialize:
++            trace = memory.get_trace_matrix()
++        else:
++            trace = memory.trace_matrix
++
+         trace_repeat_count = 0
+ 
+-        for index in range(1, memory.trace_matrix.shape[0]):
++        for index in range(1, trace.shape[0]):
++            previous_cycle = trace[max(index-bank_size, 0):index, 1:]
++            previous_cycle = previous_cycle - (np.abs(previous_cycle) == 1) * 2
+ 
+-            previous_cycle = memory.trace_matrix[max(index-bank_size, 0):index, 1:] - (np.abs(memory.trace_matrix[max(index-bank_size, 0):index, 1:]) == 1) * 2 
+-            current_cycle = memory.trace_matrix[index, 1:] - (np.abs(memory.trace_matrix[index, 1:]) == 1) * 2
++            current_cycle = trace[index, 1:]
++            current_cycle = current_cycle - (np.abs(current_cycle) == 1) * 2
+ 
+-            trace_repeat_count += self.repeat_check_each_trace(previous_cycle, current_cycle, row_size)
++            trace_repeat_count += self.repeat_check_each_trace(
++                previous_cycle, current_cycle, row_size
++            )
+ 
+         return trace_repeat_count
+ 
+diff --git a/scalesim/memory/double_buffered_scratchpad_mem.py b/scalesim/memory/double_buffered_scratchpad_mem.py
+index aad8f29..6b01666 100644
+--- a/scalesim/memory/double_buffered_scratchpad_mem.py
++++ b/scalesim/memory/double_buffered_scratchpad_mem.py
+@@ -304,7 +304,7 @@ class double_buffered_scratchpad:
+                                                  axis=1)
+         #self.total_cycles = int(ofmap_serviced_cycles[-1][0])
+         ## Probable fault in sanity check
+-        self.total_cycles = int(max(ofmap_serviced_cycles))
++        self.total_cycles = int(np.max(ofmap_serviced_cycles))
+ 
+         # END of serving demands from memory
+         self.traces_valid = True
+diff --git a/scalesim/memory/exact_active_window.py b/scalesim/memory/exact_active_window.py
+new file mode 100644
+index 0000000..cafcd64
+--- /dev/null
++++ b/scalesim/memory/exact_active_window.py
+@@ -0,0 +1,88 @@
++"""EXPERIMENTAL exact active-window membership for SCALE-Sim v3 read_buffer.
++
++Non-layout path only. Preserves original prefetch timings and request generation;
++replaces the rounded hashed-set membership test with a Counter over the exact
++prefetched addresses still resident in the fixed-capacity active window.
++
++This is a debug experiment, not a fully verified hardware cache model.
++"""
++from collections import Counter, deque
++import numpy as np
++
++
++def install_exact_window(cls):
++    """Install once; requires the previously tested _take_prefetch_words patch."""
++    if getattr(cls, '_exact_window_installed', False):
++        return
++    if not hasattr(cls, '_take_prefetch_words'):
++        raise RuntimeError(
++            'Exact-window experiment requires the validated _take_prefetch_words '
++            'method. Use your scale-sim-v3-debug checkout, not an unmodified tree.'
++        )
++
++    old_take = cls._take_prefetch_words
++    old_initial = cls.prefetch_active_buffer
++    old_refill = cls.new_prefetch
++    old_hit = cls.active_buffer_hit
++
++    def take(self, requested_words):
++        requests = old_take(self, requested_words)
++        # Record what the request generator actually handed to the backing port.
++        # Ignore -1 padding, not real addresses >= 0.
++        self._exact_last_prefetch = [
++            int(x) for x in np.asarray(requests).flat if x >= 0
++        ]
++        return requests
++
++    def initial(self, start_cycle):
++        self._exact_last_prefetch = None
++        response = old_initial(self, start_cycle=start_cycle)
++        if not self.enable_layout_evaluation:
++            values = self._exact_last_prefetch
++            if values is None:
++                raise RuntimeError('Initial prefetch did not use _take_prefetch_words')
++            if len(values) > self.active_buf_size:
++                raise RuntimeError('Initial prefetch exceeds active-buffer capacity')
++            self._exact_active_queue = deque(values)
++            self._exact_active_counts = Counter(values)
++        return response
++
++    def refill(self):
++        self._exact_last_prefetch = None
++        response = old_refill(self)
++        if not self.enable_layout_evaluation:
++            values = self._exact_last_prefetch
++            if values is None:
++                raise RuntimeError('Refill did not use _take_prefetch_words')
++            if not values:
++                raise RuntimeError('Refill fetched zero valid addresses')
++            queue = getattr(self, '_exact_active_queue', None)
++            counts = getattr(self, '_exact_active_counts', None)
++            if queue is None or counts is None:
++                raise RuntimeError('Refill before initial active-buffer load')
++            for address in values:
++                if len(queue) >= self.active_buf_size:
++                    evicted = queue.popleft()
++                    counts[evicted] -= 1
++                    if counts[evicted] == 0:
++                        del counts[evicted]
++                queue.append(address)
++                counts[address] += 1
++            if len(queue) > self.active_buf_size:
++                raise AssertionError('Exact active buffer exceeded its capacity')
++        return response
++
++    def hit(self, addr):
++        if self.enable_layout_evaluation:
++            return old_hit(self, addr)
++        assert self.active_buf_full_flag, 'Active buffer is not ready yet'
++        counts = getattr(self, '_exact_active_counts', None)
++        if counts is None:
++            raise RuntimeError('Exact active membership uninitialized')
++        return counts.get(int(addr), 0) > 0
++
++    cls._take_prefetch_words = take
++    cls.prefetch_active_buffer = initial
++    cls.new_prefetch = refill
++    cls.active_buffer_hit = hit
++    cls._exact_window_installed = True
+diff --git a/scalesim/memory/read_buffer.py b/scalesim/memory/read_buffer.py
+index a9bf693..71d074a 100644
+--- a/scalesim/memory/read_buffer.py
++++ b/scalesim/memory/read_buffer.py
+@@ -150,6 +150,9 @@ class read_buffer:
+         # In 'user' mode, this will be set in the set_params
+ 
+         num_elems = fetch_matrix_np.shape[0] * fetch_matrix_np.shape[1]
++        self._fetch_num_elems = int(num_elems)
++        self.next_line_prefetch_idx = 0
++        self.next_col_prefetch_idx = 0
+         num_lines = int(math.ceil(num_elems / self.req_gen_bandwidth))
+         self.fetch_matrix = np.ones((num_lines, self.req_gen_bandwidth)) * -1
+ 
+@@ -170,6 +173,39 @@ class read_buffer:
+         self.prepare_hashed_buffer()
+ 
+     #
++
++    def _take_prefetch_words(self, requested_words):
++        """Return the next operand words without changing fetch_matrix."""
++        n = self._fetch_num_elems
++        if n <= 0:
++            raise ValueError("Empty fetch matrix")
++
++        bw = self.req_gen_bandwidth
++        count = min(int(requested_words), n)
++
++        start = (
++            self.next_line_prefetch_idx * bw
++            + self.next_col_prefetch_idx
++        ) % n
++
++        indices = (start + np.arange(count, dtype=np.int64)) % n
++        values = self.fetch_matrix.reshape(-1)[indices]
++
++        num_rows = math.ceil(count / bw)
++        requests = np.full(
++            (num_rows, bw),
++            -1,
++            dtype=self.fetch_matrix.dtype
++        )
++        requests.reshape(-1)[:count] = values
++
++        next_pos = (start + count) % n
++        self.next_line_prefetch_idx, self.next_col_prefetch_idx = (
++            divmod(next_pos, bw)
++        )
++
++        return requests
++
+     def prepare_hashed_buffer(self):
+         # layout modeling: hashed_buffer is being modified to serve as on-chip buffer.
+         """
+@@ -359,7 +395,6 @@ class read_buffer:
+                   while not self.active_buffer_hit(addr):
+                       self.new_prefetch()
+                       potential_stall_cycles = self.last_prefetch_cycle - (cycle + offset)
+-                      offset += potential_stall_cycles        # Offset increments if there were potential stalls
+                       if potential_stall_cycles > 0:
+                           offset += potential_stall_cycles
+                     
+@@ -382,28 +417,11 @@ class read_buffer:
+         # Also, calculate the cycles arr for requests
+ 
+         # 1. Preparing the requests:
+-        num_lines = math.ceil(self.active_buf_size / self.req_gen_bandwidth)
+-        if not num_lines < self.fetch_matrix.shape[0]:
+-            num_lines = self.fetch_matrix.shape[0]
+-
+-        requested_data_size = num_lines * self.req_gen_bandwidth
+-        self.num_access += requested_data_size
+-
+-        start_idx = 0
+-        end_idx = num_lines
+-
+-        prefetch_requests = self.fetch_matrix[start_idx:end_idx, :]
+-
+-        # 1.1 See if extra requests are made, if so nullify them
+-        self.next_col_prefetch_idx = 0
+-        if requested_data_size > self.active_buf_size:
+-            valid_cols = int(self.active_buf_size % self.req_gen_bandwidth)
+-            row = end_idx - 1
+-            self.next_col_prefetch_idx = valid_cols
+-            for col in range(valid_cols, self.req_gen_bandwidth):
+-                prefetch_requests[row][col] = -1
+-
+-        # TODO: Tally and check if this agrees with the contents of the hashed buffer
++        prefetch_requests = self._take_prefetch_words(
++            self.active_buf_size
++        )
++        num_lines = prefetch_requests.shape[0]
++        self.num_access += num_lines * self.req_gen_bandwidth
+ 
+         # 2. Preparing the cycles array
+         #    The start_cycle variable ensures that all the requests have been made before any
+@@ -420,10 +438,11 @@ class read_buffer:
+ 
+         # 4. Update the variables
+         #self.last_prefetch_cycle = int(response_cycles_arr[-1][0])
+-        self.last_prefetch_cycle = int(max(response_cycles_arr))
++        self.last_prefetch_cycle = int(np.max(response_cycles_arr))
+ 
+         # Update the trace matrix
+         self.trace_matrix = np.column_stack((response_cycles_arr, prefetch_requests))
++        self._trace_chunks = []
+         self.trace_valid = True
+ 
+         # Set active buffer contents
+@@ -437,14 +456,6 @@ class read_buffer:
+ 
+         self.active_buf_full_flag = True
+ 
+-        # Set the line to be prefetched next
+-        # The module operator is to ensure that the indices wrap around
+-        if requested_data_size > self.active_buf_size:
+-            # Some elements in the current idx is left out in this case
+-            self.next_line_prefetch_idx = num_lines % self.fetch_matrix.shape[0]
+-        else:
+-            self.next_line_prefetch_idx = (num_lines + 1) % self.fetch_matrix.shape[0]
+-
+         return (self.last_prefetch_cycle - cycles_arr[-1][0] - 1)   
+     #
+     def new_prefetch(self):
+@@ -472,34 +483,11 @@ class read_buffer:
+         self.prefetch_buffer_set_limits = [prefetch_start, prefetch_end]
+ 
+         # 2. Create the request
+-        start_idx = self.next_line_prefetch_idx
+-        num_lines = math.ceil(self.prefetch_buf_size / self.req_gen_bandwidth)
+-        end_idx = start_idx + num_lines
+-        requested_data_size = num_lines * self.req_gen_bandwidth
+-        self.num_access += requested_data_size
+-
+-        # In case we need to circle back
+-        if end_idx > self.fetch_matrix.shape[0]:
+-            last_idx = self.fetch_matrix.shape[0]
+-            prefetch_requests = self.fetch_matrix[start_idx:,:]
+-
+-            new_end_idx = min(end_idx - last_idx, start_idx) # In case the entire array is engulfed
+-            prefetch_requests = \
+-                np.concatenate((prefetch_requests, self.fetch_matrix[:new_end_idx,:]))
+-        else:
+-            prefetch_requests = self.fetch_matrix[start_idx:end_idx, :]
+-
+-        # Modify the prefetch request to drop unwanted addresses
+-        # a. Chomp the elements in the first line included in previous fetches
+-        for i in range(0, self.next_col_prefetch_idx):
+-            prefetch_requests[0][i] = -1
+-
+-        # b. Chomp the excess elements in the last line
+-        if requested_data_size > self.active_buf_size:
+-            valid_cols = int(self.active_buf_size % self.req_gen_bandwidth)
+-            row = prefetch_requests.shape[0] - 1
+-            for col in range(valid_cols, self.req_gen_bandwidth):
+-                prefetch_requests[row][col] = -1
++        prefetch_requests = self._take_prefetch_words(
++            self.prefetch_buf_size
++        )
++        num_lines = prefetch_requests.shape[0]
++        self.num_access += num_lines * self.req_gen_bandwidth
+ 
+         # 3. Create the request cycles
+         cycles_arr = np.zeros((num_lines, 1))
+@@ -519,17 +507,19 @@ class read_buffer:
+         #       'The request and response cycles dims do not match'
+ 
+         this_prefetch_trace = np.column_stack((response_cycles_arr, prefetch_requests))
+-        self.trace_matrix = np.concatenate((self.trace_matrix, this_prefetch_trace), axis=0)
+-
+-        # Set the line to be prefetched next
+-        if requested_data_size > self.active_buf_size:
+-            self.next_line_prefetch_idx = num_lines % self.fetch_matrix.shape[0]
+-        else:
+-            self.next_line_prefetch_idx = (num_lines + 1) % self.fetch_matrix.shape[0]
++        self._trace_chunks.append(this_prefetch_trace)
+ 
+         # This does not need to return anything
+ 
+     #
++    def _materialize_trace_chunks(self):
++        chunks = getattr(self, "_trace_chunks", None)
++        if chunks:
++            self.trace_matrix = np.concatenate(
++                [self.trace_matrix, *chunks], axis=0
++            )
++            chunks.clear()
++
+     def get_trace_matrix(self):
+         """
+         Method to get the read buffer trace matrix. It contains addresses requsted by the systolic
+@@ -539,6 +529,7 @@ class read_buffer:
+             print('No trace has been generated yet')
+             return
+ 
++        self._materialize_trace_chunks()
+         return self.trace_matrix
+ 
+     #
+@@ -569,8 +560,9 @@ class read_buffer:
+         Method to get start and stop cycles of the read buffer if trace_valid flag is set.
+         """
+         assert self.trace_valid, 'Traces not ready yet'
+-        start_cycle = np.amin(self.trace_matrix[:,0])
+-        end_cycle = np.amax(self.trace_matrix[:,0])
++        trace = self.get_trace_matrix()
++        start_cycle = np.amin(trace[:,0])
++        end_cycle = np.amax(trace[:,0])
+ 
+         return start_cycle, end_cycle
+ 
+@@ -583,4 +575,20 @@ class read_buffer:
+             print('No trace has been generated yet')
+             return
+ 
+-        np.savetxt(filename, self.trace_matrix, fmt='%s', delimiter=",")
+\ No newline at end of file
++        np.savetxt(filename, self.get_trace_matrix(), fmt='%s', delimiter=",")
++
++# BEGIN EXPERIMENTAL EXACT ACTIVE WINDOW (validation only)
++import os as _os
++
++_exact_window_mode = _os.environ.get(
++    'SCALESIM_EXACT_ACTIVE_WINDOW', '1'
++)
++if _exact_window_mode not in ('0', '1'):
++    raise ValueError('SCALESIM_EXACT_ACTIVE_WINDOW must be 0 or 1')
++
++if _exact_window_mode == '1':
++    from scalesim.memory.exact_active_window import (
++        install_exact_window as _install_exact_window
++    )
++    _install_exact_window(read_buffer)
++# END EXPERIMENTAL EXACT ACTIVE WINDOW
+diff --git a/scalesim/simulator.py b/scalesim/simulator.py
+index ad23e58..f60ee66 100644
+--- a/scalesim/simulator.py
++++ b/scalesim/simulator.py
+@@ -83,7 +83,7 @@ class simulator:
+             self.single_layer_sim_object_list.append(this_layer_sim)
+ 
+         if not os.path.isdir(self.top_path):
+-            os.mkdir(self.top_path)
++            os.makedirs(self.top_path, exist_ok=True)
+ 
+ 
+         report_path = self.top_path + '/' + self.conf.get_run_name()
+diff --git a/scalesim/single_layer_sim.py b/scalesim/single_layer_sim.py
+index 069ecda..266e9d7 100644
+--- a/scalesim/single_layer_sim.py
++++ b/scalesim/single_layer_sim.py
+@@ -240,6 +240,52 @@ class single_layer_sim:
+     
+         ifmap_demand_mat, filter_demand_mat, ofmap_demand_mat = self.compute_system.get_demand_matrices()
+ 
++        # Optional offline scheduling experiment, NOT a hardware-accurate prefetcher.
++        # Default remains SCALE-Sim's existing WS IFMAP prefetch order.
++        prefetch_mode = os.environ.get('SCALESIM_WS_IFMAP_PREFETCH', 'legacy')
++        if prefetch_mode not in ('legacy', 'first_use'):
++            raise ValueError('Prefetch mode must be legacy or first_use')
++        if prefetch_mode == 'first_use':
++            if (self.dataflow != 'ws'
++                    or self.using_ifmap_custom_layout
++                    or getattr(self.config, 'sparsity_support', False)):
++                raise RuntimeError(
++                    'first_use requires dense WS without custom IFMAP layout'
++                )
++
++            original_flat = np.asarray(ifmap_prefetch_mat).reshape(-1)
++            original_valid = original_flat[original_flat != -1]
++            demand_flat = np.asarray(ifmap_demand_mat).reshape(-1)
++            demand_valid = demand_flat[demand_flat != -1]
++
++            unique_demands, first_positions = np.unique(
++                demand_valid, return_index=True
++            )
++            ordered = unique_demands[np.argsort(first_positions)]
++
++            if (len(original_valid) != len(np.unique(original_valid))
++                    or len(original_valid) != len(ordered)
++                    or not np.array_equal(
++                        np.sort(original_valid), np.sort(ordered)
++                    )):
++                raise AssertionError(
++                    'IFMAP reordering changed address coverage'
++                )
++
++            replacement = np.full(
++                original_flat.shape, -1, dtype=original_flat.dtype
++            )
++            replacement[:len(ordered)] = ordered
++            ifmap_prefetch_mat = replacement.reshape(
++                np.asarray(ifmap_prefetch_mat).shape
++            )
++
++            print(
++                '[WS-first-use] Reordered %d unique IFMAP addresses (offline)'
++                % len(ordered),
++                flush=True
++            )
++
+ 
+         # 1.4 Get PE action count
+         self.ifmap_write_action_count, self.ifmap_read_action_count, self.filter_write_action_count, self.filter_read_action_count, \
+@@ -251,7 +297,10 @@ class single_layer_sim:
+ 
+         # 2.1 Setup the memory system if it was not setup externally
+         if not self.memory_system_ready_flag:
+-            word_size = 1           # bytes, this can be incorporated in the config file
++            # Explicit word size; default remains the original 1-byte model.
++            word_size = int(os.environ.get('SCALESIM_WORD_SIZE_BYTES', '1'))
++            if word_size not in (1, 2, 4):
++                raise ValueError('SCALESIM_WORD_SIZE_BYTES must be 1, 2, or 4')
+             active_buf_frac = 0.5   # This can be incorporated in the config as well
+ 
+             ifmap_buf_size_kb, filter_buf_size_kb, ofmap_buf_size_kb = self.config.get_mem_sizes()
+diff --git a/tests/test_read_buffer_trace_chunks.py b/tests/test_read_buffer_trace_chunks.py
+new file mode 100644
+index 0000000..47c7a0a
+--- /dev/null
++++ b/tests/test_read_buffer_trace_chunks.py
+@@ -0,0 +1,93 @@
++import tempfile
++import unittest
++from pathlib import Path
++
++import numpy as np
++
++from scalesim.memory.read_buffer import read_buffer
++
++
++class TestReadBufferTraceChunks(unittest.TestCase):
++
++    def make_buffer(self):
++        buf = read_buffer.__new__(read_buffer)
++        buf.trace_valid = True
++        buf.trace_matrix = np.array([
++            [10, 100],
++            [11, 101],
++        ])
++        buf._trace_chunks = [
++            np.array([[20, 200], [21, 201]]),
++            np.array([[30, 300]]),
++        ]
++        return buf
++
++    def expected_trace(self):
++        return np.array([
++            [10, 100],
++            [11, 101],
++            [20, 200],
++            [21, 201],
++            [30, 300],
++        ])
++
++    def test_trace_order_and_contents(self):
++        buf = self.make_buffer()
++
++        np.testing.assert_array_equal(
++            buf.get_trace_matrix(),
++            self.expected_trace()
++        )
++
++        self.assertEqual(len(buf._trace_chunks), 0)
++
++    def test_repeated_materialization(self):
++        buf = self.make_buffer()
++
++        first = buf.get_trace_matrix().copy()
++        second = buf.get_trace_matrix()
++
++        np.testing.assert_array_equal(first, second)
++
++        buf._trace_chunks.append(np.array([[40, 400]]))
++
++        expected = np.vstack([
++            self.expected_trace(),
++            [[40, 400]]
++        ])
++
++        np.testing.assert_array_equal(
++            buf.get_trace_matrix(),
++            expected
++        )
++
++    def test_external_access_cycles(self):
++        buf = self.make_buffer()
++
++        start, end = (
++            buf.get_external_access_start_stop_cycles()
++        )
++
++        self.assertEqual(start, 10)
++        self.assertEqual(end, 30)
++
++    def test_export_contains_all_chunks(self):
++        buf = self.make_buffer()
++
++        with tempfile.TemporaryDirectory() as tmp:
++            path = Path(tmp) / "trace.csv"
++            buf.print_trace(str(path))
++
++            exported = np.loadtxt(
++                path,
++                delimiter=","
++            )
++
++            np.testing.assert_array_equal(
++                exported,
++                self.expected_trace()
++            )
++
++
++if __name__ == "__main__":
++    unittest.main()
